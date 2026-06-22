@@ -1,7 +1,7 @@
 {
-  "name": "plivo-inworld",
+  "name": "plivo-inworld-realtime",
   "version": "0.1.0",
-  "description": "Plivo voice agent powered by Inworld Realtime API",
+  "description": "Plivo voice agent using Inworld Realtime API (STT + LLM + TTS)",
   "type": "module",
   "main": "dist/index.js",
   "scripts": {
@@ -12,7 +12,6 @@
   "dependencies": {
     "dotenv": "^16.4.7",
     "express": "^5.1.0",
-    "plivo": "^4.71.0",
     "ws": "^8.21.0"
   },
   "devDependencies": {

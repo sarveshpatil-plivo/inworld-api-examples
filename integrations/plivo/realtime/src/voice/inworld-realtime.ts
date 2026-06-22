@@ -1,5 +1,9 @@
 /**
  * Inworld Realtime API WebSocket client.
+ *
+ * The Realtime API provides a complete speech-to-speech solution where
+ * a single WebSocket handles STT, LLM inference, and TTS.
+ *
  * Docs: https://docs.inworld.ai/realtime/quickstart-websocket
  */
 import WebSocket from "ws";

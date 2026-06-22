@@ -1,0 +1,31 @@
+import express from "express";
+import { createServer } from "node:http";
+import { WebSocketServer } from "ws";
+import { config } from "./config.js";
+import { xmlRouter } from "./server/xml.js";
+import { handleCallStream } from "./pipeline/call-handler.js";
+
+const app = express();
+app.use(express.urlencoded({ extended: true }));
+app.use(express.json());
+app.use(xmlRouter);
+
+const server = createServer(app);
+const wss = new WebSocketServer({ server });
+
+wss.on("connection", (ws, req) => {
+  if (req.url?.startsWith("/media-stream")) {
+    handleCallStream(ws);
+  } else {
+    ws.close();
+  }
+});
+
+server.listen(config.port, () => {
+  console.log(`[server] Listening on port ${config.port}`);
+  console.log(`[server] Voice webhook: ${config.serverUrl}/voice`);
+  console.log(`[server] Using cascaded pipeline: STT → LLM → TTS`);
+});
+
+process.on("SIGINT", () => { server.close(); process.exit(0); });
+process.on("SIGTERM", () => { server.close(); process.exit(0); });

@@ -1,8 +1,9 @@
 /**
  * Bridges a Plivo Media Stream WebSocket to an Inworld Realtime WebSocket.
  *
- * Both Plivo and Inworld use G.711 mulaw at 8kHz, so audio passes through
- * as-is with no format conversion. We only buffer to >=50ms chunks.
+ * Both Plivo and Inworld use G.711 μ-law at 8kHz, so audio passes through
+ * as-is with no format conversion. We only buffer to ≥50ms chunks for
+ * efficient transmission.
  */
 import WebSocket from "ws";
 import { InworldRealtimeClient } from "./inworld-realtime.js";
@@ -32,7 +33,7 @@ interface PlivoStopMessage {
 
 type PlivoMessage = PlivoStartMessage | PlivoMediaMessage | PlivoStopMessage;
 
-// 50ms of mulaw 8kHz = 400 bytes (8000 samples/sec x 0.05s x 1 byte/sample)
+// 50ms of μ-law 8kHz = 400 bytes (8000 samples/sec × 0.05s × 1 byte/sample)
 const MIN_CHUNK_BYTES = 400;
 
 export function handleCallStream(plivoWs: WebSocket): void {
@@ -82,7 +83,7 @@ export function handleCallStream(plivoWs: WebSocket): void {
         });
 
         inworld.on("speechStarted", () => {
-          // Clear output buffer and send clear command to Plivo
+          // Clear output buffer and send clear command to Plivo for barge-in
           outBuffer = Buffer.alloc(0);
           if (plivoWs.readyState === WebSocket.OPEN) {
             plivoWs.send(JSON.stringify({ event: "clearAudio" }));
