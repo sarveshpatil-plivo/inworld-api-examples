@@ -1,5 +1,5 @@
 {
-  "name": "plivo-inworld-cascaded",
+  "name": "plivo-inworld-cascaded-pipeline",
   "version": "0.1.0",
   "description": "Plivo voice agent using Inworld cascaded pipeline (STT + Router/LLM + TTS)",
   "type": "module",

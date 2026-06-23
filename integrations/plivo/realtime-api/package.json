@@ -1,5 +1,5 @@
 {
-  "name": "plivo-inworld-realtime",
+  "name": "plivo-inworld-realtime-api",
   "version": "0.1.0",
   "description": "Plivo voice agent using Inworld Realtime API (STT + LLM + TTS)",
   "type": "module",
