@@ -1,43 +1,41 @@
-# Plivo + Inworld Integration
+# Plivo + Inworld Voice Agent
 
-Voice agent examples connecting Plivo phone calls to Inworld AI.
+Two examples: `realtime/` (single WebSocket) and `cascaded/` (STT→LLM→TTS pipeline).
 
-## Structure
-
-- `realtime/` - Single WebSocket to Inworld Realtime API (STT+LLM+TTS combined)
-- `cascaded/` - Separate calls to Inworld STT → Router/LLM → TTS
-
-## Key Decisions
-
-- **Audio format**: G.711 μ-law 8kHz - no transcoding between Plivo and Inworld
-- **Barge-in**: Send `clearAudio` to Plivo + `response.cancel` to Inworld
-- **Chunking**: Buffer 400 bytes (50ms) before sending to avoid packet overhead
-
-## Do NOT
-
-- Commit `.env` files or API keys
-- Modify audio sample rates (must stay 8kHz for Plivo)
-- Use synchronous TTS calls in cascaded (use streaming for lower latency)
-
-## Quick Commands
+## Commands
 
 ```bash
-cd realtime && npm run dev   # Start realtime example
-cd cascaded && npm run dev   # Start cascaded example
+cd realtime && npm install && npm run dev
+cd cascaded && npm install && npm run dev
 ```
 
-## Plivo WebSocket Events
+## Rules
 
-| From Plivo | To Plivo |
-|------------|----------|
-| `start` | `playAudio` |
-| `media` | `clearAudio` |
-| `stop` | |
+- NEVER commit `.env` files or API keys
+- NEVER change audio sample rate from 8kHz - Plivo requires it
+- ALWAYS buffer 400+ bytes before sending audio (50ms minimum)
+- ALWAYS use base64 encoding for audio payloads
+- ALWAYS send `clearAudio` to Plivo AND cancel Inworld on barge-in
 
-## Inworld Realtime Events
+## Audio
 
-| Send | Receive |
-|------|---------|
-| `session.update` | `session.created` |
-| `input_audio_buffer.append` | `response.output_audio.delta` |
-| `response.cancel` | `input_audio_buffer.speech_started` |
+μ-law 8kHz mono. No transcoding. Pass through as-is.
+
+## Plivo WebSocket
+
+Send: `playAudio`, `clearAudio`
+Receive: `start`, `media`, `stop`
+
+## Inworld Realtime
+
+Send: `session.update`, `input_audio_buffer.append`, `response.cancel`
+Receive: `session.created`, `response.output_audio.delta`, `input_audio_buffer.speech_started`
+
+## File Locations
+
+| Change | File |
+|--------|------|
+| System prompt | `src/config.ts` |
+| Voice/model | `realtime/src/voice/inworld-realtime.ts` |
+| Plivo XML | `src/server/xml.ts` |
+| Call handling | `src/voice/call-handler.ts` |
