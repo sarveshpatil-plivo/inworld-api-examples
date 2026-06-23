@@ -1,86 +1,43 @@
-# Plivo + Inworld Voice Agent Integration
+# Plivo + Inworld Integration
 
-This directory contains two example integrations showing how to connect Plivo phone calls to Inworld AI services.
+Voice agent examples connecting Plivo phone calls to Inworld AI.
 
-## Directory Structure
+## Structure
 
-```
-plivo/
-├── realtime/     # Inworld Realtime API (STT + LLM + TTS in one WebSocket)
-└── cascaded/     # Cascaded pipeline (separate STT, Router/LLM, TTS services)
-```
+- `realtime/` - Single WebSocket to Inworld Realtime API (STT+LLM+TTS combined)
+- `cascaded/` - Separate calls to Inworld STT → Router/LLM → TTS
 
-## Which Example to Use?
+## Key Decisions
 
-| Use Case | Folder | Description |
-|----------|--------|-------------|
-| Simplest setup, lowest latency | `realtime/` | Single WebSocket handles everything |
-| Custom pipeline, mix providers | `cascaded/` | Control each stage separately |
-| Production with monitoring | `cascaded/` | Better observability per stage |
+- **Audio format**: G.711 μ-law 8kHz - no transcoding between Plivo and Inworld
+- **Barge-in**: Send `clearAudio` to Plivo + `response.cancel` to Inworld
+- **Chunking**: Buffer 400 bytes (50ms) before sending to avoid packet overhead
 
-## Quick Start
+## Do NOT
 
-### Realtime API (Recommended for most use cases)
+- Commit `.env` files or API keys
+- Modify audio sample rates (must stay 8kHz for Plivo)
+- Use synchronous TTS calls in cascaded (use streaming for lower latency)
+
+## Quick Commands
+
 ```bash
-cd realtime
-cp .env.example .env  # Add your credentials
-npm install && npm run dev
+cd realtime && npm run dev   # Start realtime example
+cd cascaded && npm run dev   # Start cascaded example
 ```
 
-### Cascaded Pipeline
-```bash
-cd cascaded
-cp .env.example .env  # Add your credentials
-npm install && npm run dev
-```
+## Plivo WebSocket Events
 
-## Prerequisites
+| From Plivo | To Plivo |
+|------------|----------|
+| `start` | `playAudio` |
+| `media` | `clearAudio` |
+| `stop` | |
 
-- Node.js 18+
-- Plivo account with a phone number
-- Inworld account with API key
-- ngrok for local development
+## Inworld Realtime Events
 
-## Architecture Overview
-
-### Realtime API Flow
-```
-Caller <-> Plivo <-> Your Server <-> Inworld Realtime API
-                                     (STT + LLM + TTS combined)
-```
-
-### Cascaded Pipeline Flow
-```
-Caller <-> Plivo <-> Your Server <-> Inworld STT
-                         |               |
-                         |               v
-                         |           Inworld Router/LLM
-                         |               |
-                         v               v
-                     Audio Out <---- Inworld TTS
-```
-
-## Audio Format
-
-Both Plivo and Inworld support G.711 μ-law at 8kHz, so audio passes through without transcoding.
-
-## Environment Variables
-
-Both examples require:
-- `PLIVO_AUTH_ID` - From Plivo Console
-- `PLIVO_AUTH_TOKEN` - From Plivo Console
-- `INWORLD_API_KEY` - From Inworld Platform
-- `SERVER_URL` - Your public URL (ngrok domain)
-
-## Testing
-
-1. Configure Plivo webhook to point to `https://<your-domain>/voice`
-2. Call your Plivo number
-3. Speak to the AI agent
-
-## Resources
-
-- [Inworld Realtime API Docs](https://docs.inworld.ai/realtime/overview)
-- [Inworld STT Docs](https://docs.inworld.ai/stt/overview)
-- [Inworld TTS Docs](https://docs.inworld.ai/tts/overview)
-- [Plivo Audio Streaming](https://www.plivo.com/docs/voice/xml/stream/)
+| Send | Receive |
+|------|---------|
+| `session.update` | `session.created` |
+| `input_audio_buffer.append` | `response.output_audio.delta` |
+| `response.cancel` | `input_audio_buffer.speech_started` |
