@@ -65,7 +65,7 @@ ngrok creates a public URL that tunnels to your local server.
 ### 4. Configure Environment Variables
 
 ```bash
-cd integrations/plivo/realtime
+cd integrations/plivo/realtime-api
 cp .env.example .env
 ```
 
@@ -122,7 +122,7 @@ You should see:
 ## Project Structure
 
 ```
-realtime/
+realtime-api/
 ├── src/
 │   ├── index.ts              # Express server + WebSocket setup
 │   ├── config.ts             # Environment variable handling

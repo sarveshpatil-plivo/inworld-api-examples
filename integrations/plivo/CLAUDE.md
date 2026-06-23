@@ -2,8 +2,8 @@
 
 Two self-contained examples connecting Plivo phone calls to Inworld:
 
-- **`realtime/`** — single WebSocket to the Inworld Realtime API (STT + LLM + TTS in one).
-- **`cascaded/`** — separate Inworld STT → Router/LLM → TTS services chained in a pipeline.
+- **`realtime-api/`** — single WebSocket to the Inworld Realtime API (STT + LLM + TTS in one).
+- **`cascaded-pipeline/`** — separate Inworld STT → Router/LLM → TTS services chained in a pipeline.
 
 Each folder has its own `README.md` (full setup/usage docs), `CLAUDE.md`, and `AGENTS.md`
 with details specific to that example. **Read the agent docs inside the folder you're editing** —
@@ -12,8 +12,8 @@ this root file is only an overview.
 ## Commands
 
 ```bash
-cd realtime && npm install && npm run dev
-cd cascaded && npm install && npm run dev
+cd realtime-api && npm install && npm run dev
+cd cascaded-pipeline && npm install && npm run dev
 ```
 
 ## Rules
@@ -40,7 +40,7 @@ Receive: `session.created`, `response.output_audio.delta`, `input_audio_buffer.s
 
 ## File Locations
 
-| Change | realtime/ | cascaded/ |
+| Change | realtime-api/ | cascaded-pipeline/ |
 |--------|-----------|-----------|
 | System prompt / env | `src/config.ts` | `src/config.ts` |
 | Voice / LLM / STT config | `src/voice/inworld-realtime.ts` | `src/pipeline/inworld-{stt,llm,tts}.ts` |

@@ -1,7 +1,7 @@
 # Plivo + Inworld Cascaded Pipeline Voice Agent
 
 Cascaded voice agent: Plivo → **Inworld STT** (WebSocket) → **Inworld Router/LLM** (streaming
-HTTP) → **Inworld TTS** (HTTP) → Plivo. Unlike `realtime/`, each stage is a separate Inworld
+HTTP) → **Inworld TTS** (HTTP) → Plivo. Unlike `realtime-api/`, each stage is a separate Inworld
 service, so each is independently swappable and observable.
 
 ## Commands

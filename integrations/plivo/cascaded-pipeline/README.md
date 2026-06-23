@@ -88,7 +88,7 @@ Before you begin, ensure you have:
 ### 4. Configure Environment Variables
 
 ```bash
-cd integrations/plivo/cascaded
+cd integrations/plivo/cascaded-pipeline
 cp .env.example .env
 ```
 
@@ -132,7 +132,7 @@ npm run dev
 ## Project Structure
 
 ```
-cascaded/
+cascaded-pipeline/
 ├── src/
 │   ├── index.ts              # Express server + WebSocket setup
 │   ├── config.ts             # Environment variable handling
@@ -235,7 +235,7 @@ Available voices depend on your Inworld subscription.
 ### High Latency
 
 - The cascaded approach has inherent latency (3 sequential API calls)
-- Consider the `realtime/` example for lower latency
+- Consider the `realtime-api/` example for lower latency
 - Enable streaming TTS to play audio as it generates
 
 ### STT Not Transcribing

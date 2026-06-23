@@ -43,4 +43,4 @@ if (activeAbort) {
 - No transcription: check audio is μ-law 8kHz and that STT access is enabled on the key; inspect `[stt] Error` logs.
 - No reply after transcript: verify Router access and `INWORLD_MODEL`; the 1s silence timer must fire (`[pipeline] User: ...`).
 - TTS audio bad/silent: confirm `output_format: "mulaw_8000"`; mismatched sample rate sounds garbled on Plivo.
-- High latency: expected (3 sequential services) — ensure per-sentence TTS is active; consider the `realtime/` example.
+- High latency: expected (3 sequential services) — ensure per-sentence TTS is active; consider the `realtime-api/` example.
