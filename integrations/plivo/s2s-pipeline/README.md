@@ -1,133 +1,102 @@
-# Plivo + Inworld S2S Pipeline (Realtime API) — Inbound Voice Agent
+# Plivo + Inworld Realtime Voice Agent
 
-Inbound phone voice agent that bridges [Plivo](https://www.plivo.com/) telephony to the
-[Inworld Realtime API](https://docs.inworld.ai/realtime/overview). A single WebSocket to Inworld
-handles the full speech-to-speech loop — STT, LLM, and TTS — and audio is G.711 μ-law at 8kHz on
-both legs, so it passes through with no transcoding. The server auto-provisions the Plivo
-Application and number mapping on startup; the agent runs a small call state machine with
-barge-in. Native orchestration (raw WebSockets), no framework.
-
-## Architecture
+A voice agent that connects phone calls to the [Inworld Realtime API](https://docs.inworld.ai/realtime/overview) for speech-to-speech conversations. One WebSocket to Inworld handles STT + LLM + TTS, and audio is G.711 μ-law at 8kHz on both legs, so it passes through with no conversion.
 
 ```
-┌──────────┐     ┌──────────┐     ┌──────────────────┐     ┌─────────────────────┐
-│  Caller  │────▶│  Plivo   │────▶│  server.ts (/ws) │────▶│ Inworld Realtime API│
-│ (Phone)  │◀────│  (PSTN)  │◀────│  agent.ts (S2S)  │◀────│  (STT + LLM + TTS)  │
-└──────────┘     └──────────┘     └──────────────────┘     └─────────────────────┘
-                   G.711 μ-law 8kHz (passthrough, no transcoding)
+Caller ↔ Plivo ↔ WebSocket ↔ Inworld Realtime
+              mulaw 8kHz (passthrough)
 ```
 
-1. Caller dials your Plivo number → Plivo POSTs the `/answer` webhook.
-2. `/answer` returns XML with `<Stream bidirectional="true">` pointing at `/ws`.
-3. Plivo opens a bidirectional media WebSocket; `server.ts` hands it to `agent.ts`.
-4. `agent.ts` opens the Inworld Realtime socket, configures the session, and bridges audio both ways.
-5. Barge-in: while the agent is speaking, caller speech clears Plivo playback and cancels the Inworld response.
+## Prerequisites
+
+- [Node.js](https://nodejs.org/) v18+
+- [ngrok](https://ngrok.com/) account (free tier works)
+- [Plivo](https://www.plivo.com/) account with a Voice-enabled phone number
+- [Inworld](https://www.inworld.ai/) account with a Realtime API key
+
+## Setup
+
+1. **Get your Inworld API key** — sign up at [inworld.ai](https://www.inworld.ai/), go to your workspace, and create an API key for the Realtime API.
+
+2. **Get a Plivo phone number** — sign up at [plivo.com](https://www.plivo.com/), buy a number with Voice capability, and copy your Auth ID and Auth Token from the [console](https://console.plivo.com/dashboard/).
+
+3. **Set up ngrok** — [install ngrok](https://ngrok.com/download), then start a tunnel to port 3000 (a reserved [static domain](https://dashboard.ngrok.com/domains) keeps the URL stable).
+
+4. **Configure environment:**
+   ```bash
+   cp .env.example .env
+   # Fill in INWORLD_API_KEY, PLIVO_AUTH_ID, PLIVO_AUTH_TOKEN,
+   # PLIVO_PHONE_NUMBER (E.164), and PUBLIC_URL (your ngrok URL)
+   ```
+
+5. **Install dependencies:**
+   ```bash
+   npm install
+   ```
+
+On startup the server **auto-configures Plivo** — it creates (or updates) a Plivo Application pointing at this server's webhooks and maps `PLIVO_PHONE_NUMBER` to it, so there's no manual console step. To configure manually instead, leave `PLIVO_PHONE_NUMBER` unset and set your number's Answer URL to `https://<your-ngrok-domain>/answer` (HTTP POST).
+
+> ngrok is for local development. For production, deploy the server behind a stable HTTPS URL.
+
+## Run
+
+In two terminals:
+
+```bash
+ngrok http 3000
+```
+
+```bash
+npm run dev
+```
+
+Set `PUBLIC_URL` in `.env` to the ngrok HTTPS URL, then call your Plivo number — the bot will greet you and you can have a conversation.
+
+## How it works
+
+1. Inbound call hits `/answer` → returns Plivo XML with `<Stream bidirectional="true">`
+2. Plivo opens a Media Stream WebSocket to `/ws`
+3. Server passes mulaw audio between Plivo and the Inworld Realtime API (no format conversion needed)
+4. Barge-in: on speech detection, clears Plivo playback and cancels the Inworld response
+
+```xml
+<Response>
+  <Stream bidirectional="true" keepCallAlive="true" contentType="audio/x-mulaw;rate=8000">
+    wss://<your-ngrok-domain>/ws
+  </Stream>
+</Response>
+```
 
 ## Project structure
 
 ```
 s2s-pipeline/
 ├── inbound/
-│   ├── agent.ts          # pipeline orchestration + call state machine (Inworld S2S)
-│   ├── server.ts         # telephony + Plivo provisioning: /answer /ws /hangup /fallback
-│   └── system_prompt.md  # system instructions (override with SYSTEM_PROMPT)
-├── utils.ts              # shared helpers (phone normalization)
-├── package.json
-├── tsconfig.json
-├── .env.example
-└── README.md
+│   ├── agent.ts          # pipeline orchestration + call state machine
+│   ├── server.ts         # telephony + Plivo provisioning (/answer, /ws, /hangup, /fallback)
+│   └── system_prompt.md  # system instructions
+└── utils.ts              # phone-number helpers
 ```
 
-(Layout: `inbound/{agent,server,system_prompt}` + a shared `utils.ts`.)
-
-## Prerequisites
-
-- Node.js 18+
-- An [ngrok](https://ngrok.com/) account (free tier works)
-- A [Plivo](https://www.plivo.com/) account with a Voice-enabled phone number + Auth ID/Token
-- An [Inworld](https://www.inworld.ai/) API key with **Realtime API** scope
-
-## Setup
-
-```bash
-npm install
-cp .env.example .env
-```
-
-Fill `.env`:
+## Configuration
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `INWORLD_API_KEY` | yes | – | Inworld key with Realtime API scope |
+| `INWORLD_API_KEY` | yes | – | Inworld key with Realtime API access |
 | `PUBLIC_URL` | yes | – | Public HTTPS base URL (your ngrok URL, no trailing slash) |
-| `PLIVO_AUTH_ID` | yes | – | Plivo Auth ID |
-| `PLIVO_AUTH_TOKEN` | yes | – | Plivo Auth Token |
+| `PLIVO_AUTH_ID` / `PLIVO_AUTH_TOKEN` | yes | – | Plivo credentials |
 | `PLIVO_PHONE_NUMBER` | for auto-provision | – | E.164 number to map to this app (e.g. `+14155551234`) |
-| `SERVER_PORT` | no | `3000` | HTTP/WS port |
-| `DEFAULT_COUNTRY_CODE` | no | `1` | Used to normalize bare local numbers |
+| `SERVER_PORT` | no | `3000` | HTTP/WebSocket port |
 | `SYSTEM_PROMPT` | no | `inbound/system_prompt.md` | Override the system instructions |
 | `INWORLD_MODEL` | no | `openai/gpt-4.1-mini` | LLM model |
 | `INWORLD_VOICE` | no | `Sarah` | TTS voice |
-| `INWORLD_TTS_MODEL` | no | `inworld-tts-2` | TTS model |
-| `INWORLD_STT_MODEL` | no | `assemblyai/universal-streaming-multilingual` | Input transcription model |
-
-## Run
-
-```bash
-# Terminal 1 — public tunnel
-ngrok http 3000
-# copy the https URL into PUBLIC_URL in .env
-
-# Terminal 2 — server
-npm run dev
-```
-
-On startup the server **auto-provisions Plivo**: it finds or creates an Application
-(`Inworld_S2S_Voice_Agent`) with the `/answer`, `/hangup`, `/fallback` webhooks and maps
-`PLIVO_PHONE_NUMBER` to it. Expect:
-
-```
-[provision] Mapped +14155551234 → Inworld_S2S_Voice_Agent
-[server] Listening on port 3000
-[server] Answer webhook: https://<domain>/answer
-```
-
-If you'd rather configure manually, leave `PLIVO_PHONE_NUMBER` unset and point your number's
-**Answer URL** at `https://<domain>/answer` (POST) in the Plivo console.
-
-Then call the number.
-
-## Endpoints
-
-| Route | Purpose |
-|-------|---------|
-| `GET /` | Health check |
-| `GET/POST /answer` | Returns Plivo XML opening the `/ws` media stream |
-| `WS /ws` | Bidirectional μ-law audio; handed to the agent on the `start` event |
-| `POST /hangup` | Logs call teardown (Duration, HangupCause) |
-| `POST /fallback` | Graceful spoken error if `/answer` fails |
-
-## Audio & message contracts
-
-- Plivo WS: receives `start` / `media` (base64 μ-law) / `stop`; the agent sends `playAudio`
-  (`{contentType:"audio/x-mulaw", sampleRate:8000, payload}`, 160-byte/20ms chunks) and `clearAudio`.
-- Inworld Realtime (`wss://api.inworld.ai/api/v1/realtime/session`, `Basic` auth): the agent sends
-  `session.update`, `input_audio_buffer.append`, `response.create`, `response.cancel`; receives
-  `session.created/updated`, `response.output_audio.delta/done`, `response.done`,
-  `input_audio_buffer.speech_started`, transcription + `error` events.
 
 ## Troubleshooting
 
-- **Audio drops mid-response** — ensure `playAudio` carries `contentType` + `sampleRate` (this client does).
-- **Call doesn't connect** — `/answer` must be reachable over HTTPS and `PUBLIC_URL` must match ngrok.
-- **Provisioning failed** — check Plivo creds and that `PLIVO_PHONE_NUMBER` is E.164; see `[provision]` logs.
-- **No AI response / 403** — the Inworld key must have **Realtime API** scope; server logs show `Inworld HTTP <status>`.
-
-## Barge-in
-
-Barge-in uses Inworld's server-side `speech_started` event, gated on the `agentSpeaking` state so
-the agent only stops speaking for genuine interruptions. For finer control you can add a
-client-side VAD (e.g. Silero) on the inbound audio.
+- **No audio / one-way audio** — make sure `PUBLIC_URL` matches your ngrok URL and the number's Answer URL uses HTTPS.
+- **Call doesn't connect** — confirm the `/answer` webhook is reachable; check the server logs for the incoming-call line.
+- **Provisioning failed** — verify the Plivo credentials and that `PLIVO_PHONE_NUMBER` is E.164; see the `[provision]` log lines.
+- **No AI response** — verify the Inworld key has Realtime API access; the logs surface the Inworld connection status.
 
 ## License
 
