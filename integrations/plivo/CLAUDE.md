@@ -4,8 +4,14 @@ Self-contained inbound voice-agent examples connecting Plivo phone calls to Inwo
 follows a conventional layout: each example has
 `inbound/{agent.ts, server.ts, system_prompt.md}` + a shared `utils.ts`.
 
-- **`s2s-pipeline/`** — single WebSocket to the Inworld Realtime API (speech-to-speech: STT + LLM + TTS in one). **Done.**
-- **`stt-llm-tts-pipeline/`** — separate Inworld STT → Router/LLM → TTS services chained (more flexibility, higher latency).
+- **`s2s-pipeline/`** — single WebSocket to the Inworld Realtime API (speech-to-speech: STT + LLM + TTS in one).
+- **`inworld-stt/`** — full agent spotlighting **Inworld STT** (Inworld STT + Gemini LLM + ElevenLabs TTS).
+- **`inworld-llm/`** — full agent spotlighting **Inworld LLM/Router** (Deepgram STT + Inworld LLM + ElevenLabs TTS).
+- **`inworld-tts/`** — full agent spotlighting **Inworld TTS** (Deepgram STT + Gemini LLM + Inworld TTS).
+
+Each cascaded example is a complete voice agent over Plivo; only one stage is Inworld so you can see
+how to drop a single Inworld product into an existing stack. (`inworld-llm` is built; `inworld-stt`
+and `inworld-tts` follow the same skeleton.)
 
 Each folder has its own `README.md`, `CLAUDE.md`, and `AGENTS.md`. **Read the agent docs inside
 the folder you're editing** — this root file is only an overview.

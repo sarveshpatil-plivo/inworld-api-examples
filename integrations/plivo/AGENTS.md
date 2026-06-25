@@ -1,11 +1,14 @@
 # Agent Rules — Plivo + Inworld Voice Agents
 
-Two inbound voice-agent examples. Each is self-contained; read the `AGENTS.md`/`CLAUDE.md` inside
+Inbound voice-agent examples. Each is self-contained; read the `AGENTS.md`/`CLAUDE.md` inside
 the folder you're editing.
 
-- `s2s-pipeline/` — Inworld Realtime (speech-to-speech), one WebSocket. **Working.**
-- `stt-llm-tts-pipeline/` — Inworld STT → Router/LLM → TTS, cascaded. **Builds; needs a
-  STT+Router+TTS-scoped key to verify live.**
+- `s2s-pipeline/` — Inworld Realtime (speech-to-speech), one WebSocket (all Inworld).
+- `inworld-stt/` — full agent, Inworld **STT** + Gemini LLM + ElevenLabs TTS.
+- `inworld-llm/` — full agent, Deepgram STT + Inworld **LLM/Router** + ElevenLabs TTS.
+- `inworld-tts/` — full agent, Deepgram STT + Gemini LLM + Inworld **TTS**.
+
+Each cascaded example spotlights one Inworld product; the other two stages use different providers.
 
 ## MUST
 

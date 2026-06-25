@@ -1,38 +1,36 @@
 /**
- * Inbound voice agent — Inworld cascaded STT → LLM(Router) → TTS pipeline.
+ * Inbound voice agent — Inworld LLM spotlight.
  *
- * Three Inworld services wired in sequence (each independently swappable):
- *   STT  — wss://api.inworld.ai/stt/v1/transcribe:streamBidirectional (LINEAR16)
- *   LLM  — POST https://api.inworld.ai/v1/chat/completions (OpenAI-compatible SSE)
- *   TTS  — POST https://api.inworld.ai/tts/v1/voice:stream (PCM → μ-law for Plivo)
+ * Full speech-to-speech pipeline over Plivo, where the LLM is Inworld's Router
+ * and the other two stages use different providers:
+ *   STT  — Deepgram  (wss://api.deepgram.com/v1/listen, LINEAR16 8k)
+ *   LLM  — Inworld Router  (POST https://api.inworld.ai/v1/chat/completions, SSE)
+ *   TTS  — ElevenLabs  (POST /v1/text-to-speech/{voice}?output_format=ulaw_8000)
  *
- * Audio: Plivo μ-law 8k → PCM16 for STT; TTS PCM → μ-law 8k for Plivo (utils.ts).
- * STT is sent LINEAR16 @ 8kHz; TTS is requested as PCM @ TTS_SAMPLE_RATE (default
- * 8kHz) and resampled to 8kHz before μ-law — adjust the env if your Inworld
- * account expects a different STT rate or TTS output encoding.
+ * Audio: Plivo μ-law 8k → PCM16 for Deepgram; ElevenLabs returns μ-law 8k, sent
+ * straight to Plivo. The agent owns orchestration and the call state machine.
  */
 import { readFileSync } from "node:fs";
 import WebSocket from "ws";
-import { ulawToPcm, pcmToUlaw, resamplePcm16 } from "../utils.js";
+import { ulawToPcm } from "../utils.js";
 
-// ── Config (agent owns API keys, models, voices, URLs) ──────────────────────
+// ── Config ──────────────────────────────────────────────────────────────────
 const INWORLD_API_KEY = process.env.INWORLD_API_KEY || "";
 const INWORLD_LLM_MODEL = process.env.INWORLD_MODEL || "openai/gpt-4.1-mini";
-const INWORLD_STT_MODEL = process.env.INWORLD_STT_MODEL || "inworld/inworld-stt-1";
-const INWORLD_TTS_MODEL = process.env.INWORLD_TTS_MODEL || "inworld-tts-2";
-const INWORLD_VOICE = process.env.INWORLD_VOICE || "Sarah";
+const DEEPGRAM_API_KEY = process.env.DEEPGRAM_API_KEY || "";
+const DEEPGRAM_MODEL = process.env.DEEPGRAM_MODEL || "nova-2-phonecall";
+const ELEVENLABS_API_KEY = process.env.ELEVENLABS_API_KEY || "";
+const ELEVENLABS_VOICE_ID = process.env.ELEVENLABS_VOICE_ID || "21m00Tcm4TlvDq8ikWAM";
+const ELEVENLABS_MODEL = process.env.ELEVENLABS_MODEL || "eleven_flash_v2_5";
 
-const STT_URL = "wss://api.inworld.ai/stt/v1/transcribe:streamBidirectional";
 const LLM_URL = "https://api.inworld.ai/v1/chat/completions";
-const TTS_URL = "https://api.inworld.ai/tts/v1/voice:stream";
-const AUTH = `Basic ${INWORLD_API_KEY}`;
+const DEEPGRAM_URL =
+  `wss://api.deepgram.com/v1/listen?model=${DEEPGRAM_MODEL}` +
+  `&encoding=linear16&sample_rate=8000&channels=1&punctuate=true&interim_results=false`;
+const ELEVENLABS_URL =
+  `https://api.elevenlabs.io/v1/text-to-speech/${ELEVENLABS_VOICE_ID}?output_format=ulaw_8000`;
 
-const PLIVO_SAMPLE_RATE = 8000;
 const PLIVO_CHUNK_SIZE = 160; // 20ms @ 8kHz μ-law
-/** TTS output sample rate we request as PCM; resampled to 8k before μ-law. */
-const TTS_SAMPLE_RATE = parseInt(process.env.TTS_SAMPLE_RATE || "8000", 10);
-/** Silence after a final transcript before we treat the turn as complete. */
-const END_OF_UTTERANCE_MS = 800;
 
 const SYSTEM_PROMPT =
   process.env.SYSTEM_PROMPT ||
@@ -48,7 +46,7 @@ interface AgentOptions {
   systemPrompt?: string;
 }
 
-class InworldCascadedAgent {
+class InworldLlmAgent {
   private readonly plivoWs: WebSocket;
   private readonly callId: string;
   private readonly streamId: string;
@@ -60,8 +58,6 @@ class InworldCascadedAgent {
   private outBuffer = Buffer.alloc(0);
   private history: Message[];
   private activeAbort: AbortController | null = null;
-  private silenceTimer: NodeJS.Timeout | null = null;
-  private pendingTranscript = "";
   private pendingTurn: string | null = null;
   private resolveDone: (() => void) | null = null;
 
@@ -83,33 +79,23 @@ class InworldCascadedAgent {
     await new Promise<void>((resolve) => {
       this.resolveDone = resolve;
 
-      const stt = new WebSocket(STT_URL, { headers: { Authorization: AUTH } });
+      const stt = new WebSocket(DEEPGRAM_URL, { headers: { Authorization: `Token ${DEEPGRAM_API_KEY}` } });
       this.stt = stt;
 
       stt.on("open", () => {
-        this.log("stt", "connected → configuring");
-        this.sttSend({
-          transcribeConfig: {
-            modelId: INWORLD_STT_MODEL,
-            audioEncoding: "LINEAR16",
-            sampleRateHertz: PLIVO_SAMPLE_RATE,
-            numberOfChannels: 1,
-            language: "en-US",
-          },
-        });
-        // Greet the caller once STT is ready.
+        this.log("stt", "connected to Deepgram");
         void this.speak("Hello! How can I help you today?");
       });
-      stt.on("message", (data: Buffer) => this.onSttMessage(data));
+      stt.on("message", (data: Buffer) => this.onDeepgramMessage(data));
       stt.on("error", (err) => {
         console.error(`[${this.callId}] [stt] socket error: ${(err as Error).message}`);
-        this.finish(); // STT is the only input path — a dead socket means a dead call
+        this.finish();
       });
       stt.on("close", () => this.finish());
       stt.on("unexpected-response", (_req, res) => {
         let body = "";
         res.on("data", (c: Buffer) => (body += c.toString()));
-        res.on("end", () => { console.error(`[${this.callId}] [stt] Inworld HTTP ${res.statusCode}: ${body}`); this.finish(); });
+        res.on("end", () => { console.error(`[${this.callId}] [stt] Deepgram HTTP ${res.statusCode}: ${body}`); this.finish(); });
         res.on("error", () => this.finish());
       });
 
@@ -125,60 +111,42 @@ class InworldCascadedAgent {
   private finish(): void {
     if (!this.running) return;
     this.running = false;
-    if (this.silenceTimer) clearTimeout(this.silenceTimer);
     this.activeAbort?.abort();
     try { this.stt?.close(); } catch { /* noop */ }
     this.log("session", "ended");
     this.resolveDone?.();
   }
 
-  // ── plivo_rx: caller μ-law → PCM16 → STT ──────────────────────────────────
+  // ── plivo_rx: caller μ-law → PCM16 → Deepgram (binary frames) ─────────────
   private onPlivoMessage(data: Buffer): void {
     let msg: { event?: string; media?: { payload?: string } };
     try { msg = JSON.parse(data.toString()); } catch { return; }
     if (msg.event === "media" && msg.media?.payload) {
       const pcm = ulawToPcm(Buffer.from(msg.media.payload, "base64"));
-      this.sttSend({ audioChunk: { content: pcm.toString("base64") } });
+      if (this.stt?.readyState === WebSocket.OPEN) this.stt.send(pcm);
     } else if (msg.event === "stop") {
       this.log("plivo_rx", "Plivo stop event");
       this.finish();
     }
   }
 
-  // ── stt_rx: transcripts → barge-in / turn handling ────────────────────────
-  private onSttMessage(data: Buffer): void {
+  // ── deepgram_rx: final transcripts → turns / barge-in ─────────────────────
+  private onDeepgramMessage(data: Buffer): void {
     let msg: any;
     try { msg = JSON.parse(data.toString()); } catch { return; }
-    if (msg.error) { console.error(`[${this.callId}] [stt] error frame: ${JSON.stringify(msg.error)}`); return; }
-    const t = msg?.result?.transcription;
-    const text: string = t?.transcript || "";
-    if (!text) return;
+    if (msg?.type !== "Results") return;
+    const transcript: string = msg?.channel?.alternatives?.[0]?.transcript || "";
+    if (!transcript.trim()) return;
 
-    // Any caller speech while the agent is talking → barge-in.
+    // interim_results=false → each Results is a finalized utterance.
     if (this.agentSpeaking) this.bargeIn();
-
-    if (t.isFinal) {
-      this.pendingTranscript = (this.pendingTranscript + " " + text).trim();
-      if (this.silenceTimer) clearTimeout(this.silenceTimer);
-      this.silenceTimer = setTimeout(() => {
-        const utterance = this.pendingTranscript;
-        this.pendingTranscript = "";
-        if (utterance) void this.handleTurn(utterance);
-      }, END_OF_UTTERANCE_MS);
-    }
+    void this.handleTurn(transcript.trim());
   }
 
-  // ── turn: LLM stream → per-sentence TTS → Plivo ───────────────────────────
+  // ── turn: Inworld LLM stream → per-sentence ElevenLabs TTS → Plivo ────────
   private async handleTurn(transcript: string): Promise<void> {
-    // A turn already running: don't drop the new utterance — queue it (latest
-    // wins) and run it when the current turn finishes.
     if (this.processing) { this.pendingTurn = transcript; return; }
     this.processing = true;
-    // NOTE: agentSpeaking is NOT set here. It flips true only once audio is
-    // actually sent to Plivo (sendChunkToPlivo). Setting it at turn start would
-    // make trailing STT transcripts of the user's just-finished utterance look
-    // like a barge-in and abort the reply before it begins. The 800ms silence
-    // debounce + "audio started" gating keeps barge-in tied to real interruptions.
     this.log("turn", `user: ${transcript}`);
     this.history.push({ role: "user", content: transcript });
 
@@ -216,13 +184,13 @@ class InworldCascadedAgent {
   private async *streamLLM(messages: Message[], signal: AbortSignal): AsyncGenerator<string> {
     const res = await fetch(LLM_URL, {
       method: "POST",
-      headers: { Authorization: AUTH, "Content-Type": "application/json" },
+      headers: { Authorization: `Basic ${INWORLD_API_KEY}`, "Content-Type": "application/json" },
       body: JSON.stringify({ model: INWORLD_LLM_MODEL, messages, stream: true }),
       signal,
     });
-    if (!res.ok) throw new Error(`Router ${res.status}: ${(await res.text()).slice(0, 200)}`);
+    if (!res.ok) throw new Error(`Inworld Router ${res.status}: ${(await res.text()).slice(0, 200)}`);
     const reader = res.body?.getReader();
-    if (!reader) throw new Error("Router: no response body");
+    if (!reader) throw new Error("Inworld Router: no response body");
     const decoder = new TextDecoder();
     let buf = "";
     for (;;) {
@@ -243,28 +211,18 @@ class InworldCascadedAgent {
     }
   }
 
-  /** Synthesize text via TTS and stream the audio to Plivo. */
+  /** Synthesize via ElevenLabs (μ-law 8k) and stream to Plivo. */
   private async speak(text: string, signal?: AbortSignal): Promise<void> {
     this.log("tts", `speaking: ${text.slice(0, 60)}`);
-    const res = await fetch(TTS_URL, {
+    const res = await fetch(ELEVENLABS_URL, {
       method: "POST",
-      headers: { Authorization: AUTH, "Content-Type": "application/json" },
-      body: JSON.stringify({
-        text,
-        voice_id: INWORLD_VOICE,
-        model_id: INWORLD_TTS_MODEL,
-        audio_config: { audio_encoding: "PCM", sample_rate_hertz: TTS_SAMPLE_RATE },
-      }),
+      headers: { "xi-api-key": ELEVENLABS_API_KEY, "Content-Type": "application/json" },
+      body: JSON.stringify({ text, model_id: ELEVENLABS_MODEL }),
       signal,
     });
-    if (!res.ok) throw new Error(`TTS ${res.status}: ${(await res.text()).slice(0, 200)}`);
-    const raw = new Uint8Array(await res.arrayBuffer());
-    if (raw.length % 2 !== 0) console.warn(`[${this.callId}] [tts] odd byte count (${raw.length}) — output may not be PCM16 as assumed`);
-    const pcm =
-      TTS_SAMPLE_RATE !== PLIVO_SAMPLE_RATE
-        ? resamplePcm16(raw, TTS_SAMPLE_RATE, PLIVO_SAMPLE_RATE)
-        : raw;
-    this.enqueueAudio(pcmToUlaw(pcm));
+    if (!res.ok) throw new Error(`ElevenLabs ${res.status}: ${(await res.text()).slice(0, 200)}`);
+    const ulaw = Buffer.from(await res.arrayBuffer()); // already μ-law 8k
+    this.enqueueAudio(ulaw);
     this.flushRemainder();
   }
 
@@ -286,8 +244,7 @@ class InworldCascadedAgent {
 
   private sendChunkToPlivo(chunk: Buffer): void {
     if (this.plivoWs.readyState !== WebSocket.OPEN || !this.streamId) return;
-    // Audio is actively going to the caller → now barge-in should react to new speech.
-    this.agentSpeaking = true;
+    this.agentSpeaking = true; // audio is actively going to the caller
     this.plivoWs.send(JSON.stringify({
       event: "playAudio",
       media: { contentType: "audio/x-mulaw", sampleRate: 8000, payload: chunk.toString("base64") },
@@ -297,19 +254,14 @@ class InworldCascadedAgent {
   private bargeIn(): void {
     this.log("barge-in", "user interrupted — clearing playback");
     this.agentSpeaking = false;
-    if (this.silenceTimer) { clearTimeout(this.silenceTimer); this.silenceTimer = null; }
     this.outBuffer = Buffer.alloc(0);
     this.activeAbort?.abort();
     if (this.plivoWs.readyState === WebSocket.OPEN) {
       this.plivoWs.send(JSON.stringify({ event: "clearAudio", stream_id: this.streamId }));
     }
   }
-
-  private sttSend(msg: object): void {
-    if (this.stt?.readyState === WebSocket.OPEN) this.stt.send(JSON.stringify(msg));
-  }
 }
 
 export async function runAgent(opts: AgentOptions): Promise<void> {
-  await new InworldCascadedAgent(opts).run();
+  await new InworldLlmAgent(opts).run();
 }

@@ -1,13 +1,6 @@
 /**
  * Standalone server for inbound calls (Plivo telephony + Plivo provisioning).
- *
  * Telephony only — the STT→LLM→TTS pipeline lives in agent.ts.
- *   - On startup, ensure the Plivo Application + number→app mapping exist.
- *   - POST/GET /answer  → Plivo XML opening a bidirectional μ-law media stream
- *   - WS   /ws          → hands the stream to the agent once it starts
- *   - POST /hangup      → logs call teardown
- *   - POST /fallback    → graceful failure message
- *   - GET  /            → health check
  */
 import "dotenv/config";
 import { createServer } from "node:http";
@@ -22,7 +15,7 @@ const PLIVO_AUTH_ID = process.env.PLIVO_AUTH_ID || "";
 const PLIVO_AUTH_TOKEN = process.env.PLIVO_AUTH_TOKEN || "";
 const PLIVO_PHONE_NUMBER = process.env.PLIVO_PHONE_NUMBER || "";
 const PUBLIC_URL = process.env.PUBLIC_URL || "";
-const APP_NAME = "Inworld_STT_LLM_TTS_Voice_Agent";
+const APP_NAME = "Inworld_LLM_Voice_Agent";
 
 async function configurePlivoWebhooks(): Promise<boolean> {
   const missing = [
@@ -81,7 +74,7 @@ app.use(express.json());
 
 app.get("/", (_req, res) => {
   const phone = normalizePhoneNumber(PLIVO_PHONE_NUMBER);
-  res.json({ status: "ok", service: "inworld-stt-llm-tts-inbound", phone_number: phone ? `+${phone}` : "not configured" });
+  res.json({ status: "ok", service: "inworld-llm-inbound", phone_number: phone ? `+${phone}` : "not configured" });
 });
 
 function answerHandler(req: express.Request, res: express.Response) {
