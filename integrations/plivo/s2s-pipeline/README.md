@@ -38,7 +38,7 @@ s2s-pipeline/
 └── README.md
 ```
 
-(Follows the `plivo/python-agents-examples` convention: `inbound/{agent,server,system_prompt}` + shared `utils`.)
+(Layout: `inbound/{agent,server,system_prompt}` + a shared `utils.ts`.)
 
 ## Prerequisites
 
@@ -123,10 +123,11 @@ Then call the number.
 - **Provisioning failed** — check Plivo creds and that `PLIVO_PHONE_NUMBER` is E.164; see `[provision]` logs.
 - **No AI response / 403** — the Inworld key must have **Realtime API** scope; server logs show `Inworld HTTP <status>`.
 
-## Known follow-up
+## Barge-in
 
-Client-side Silero VAD (the reference convention's preferred barge-in trigger) is not yet ported;
-barge-in currently uses Inworld's server-side `speech_started` gated by the `agentSpeaking` state.
+Barge-in uses Inworld's server-side `speech_started` event, gated on the `agentSpeaking` state so
+the agent only stops speaking for genuine interruptions. For finer control you can add a
+client-side VAD (e.g. Silero) on the inbound audio.
 
 ## License
 

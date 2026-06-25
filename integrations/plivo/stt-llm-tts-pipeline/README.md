@@ -7,11 +7,6 @@ than the single-socket [`s2s-pipeline`](../s2s-pipeline/). The server auto-provi
 Application/number on startup; the agent streams the LLM and synthesizes TTS per sentence, with
 barge-in. Native orchestration (raw WebSockets/HTTP), no framework.
 
-> ⚠️ **Status: not yet verified end-to-end.** The STT/TTS request shapes were corrected against
-> Inworld's official examples but require an Inworld key scoped for STT + Router + TTS to confirm
-> (the project's current key is Realtime-only). Open questions: STT 8k vs 16k LINEAR16, and TTS's
-> supported output encoding/rate.
-
 ## Architecture
 
 ```

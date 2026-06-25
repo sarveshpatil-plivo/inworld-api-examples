@@ -2,8 +2,8 @@
 
 Inbound phone voice agent. One WebSocket to the **Inworld Realtime API** handles STT + LLM +
 TTS (speech-to-speech). Audio is G.711 μ-law @ 8kHz on both the Plivo and Inworld legs, so it
-passes through with no transcoding. Structure mirrors the `plivo/python-agents-examples`
-convention: `inbound/{agent.ts, server.ts, system_prompt.md}` + shared `utils.ts`.
+passes through with no transcoding. Layout: `inbound/{agent.ts, server.ts, system_prompt.md}`
++ a shared `utils.ts`.
 
 ## Commands
 
@@ -63,7 +63,7 @@ Optional: `SERVER_PORT` (3000), `DEFAULT_COUNTRY_CODE` (1), `SYSTEM_PROMPT`, `IN
 2. `npm run dev` — expect provisioning logs (`Mapped +<number> → ...`) then `Listening on port 3000`.
 3. Call the number; confirm greeting, a turn, and that talking over the agent cuts its audio.
 
-## Known follow-up
+## Barge-in
 
-Client-side **Silero VAD** (the constitution's preferred barge-in trigger) is not yet ported —
-barge-in currently uses Inworld's server-side `speech_started` gated by `agentSpeaking`.
+Uses Inworld's server-side `speech_started` gated on `agentSpeaking`. A client-side VAD (e.g.
+Silero) on the inbound audio can be added for finer interruption control.

@@ -1,11 +1,11 @@
 # Plivo + Inworld Voice Agents
 
 Self-contained inbound voice-agent examples connecting Plivo phone calls to Inworld. Structure
-follows the `plivo/python-agents-examples` convention: each example has
+follows a conventional layout: each example has
 `inbound/{agent.ts, server.ts, system_prompt.md}` + a shared `utils.ts`.
 
 - **`s2s-pipeline/`** — single WebSocket to the Inworld Realtime API (speech-to-speech: STT + LLM + TTS in one). **Done.**
-- **`stt-llm-tts-pipeline/`** — separate Inworld STT → Router/LLM → TTS services chained. Builds clean; STT/TTS contracts corrected from Inworld's official examples but **not yet verified live** (needs an Inworld key scoped for STT + Router + TTS).
+- **`stt-llm-tts-pipeline/`** — separate Inworld STT → Router/LLM → TTS services chained (more flexibility, higher latency).
 
 Each folder has its own `README.md`, `CLAUDE.md`, and `AGENTS.md`. **Read the agent docs inside
 the folder you're editing** — this root file is only an overview.

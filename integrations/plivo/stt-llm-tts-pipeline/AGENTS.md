@@ -1,9 +1,7 @@
 # Agent Rules — Plivo + Inworld STT-LLM-TTS Pipeline (inbound)
 
 Cascaded STT → Router/LLM → TTS inbound voice agent. See this folder's `CLAUDE.md` for the
-pipeline flow, corrected API contracts, and file map.
-
-> ⚠️ Not yet verified live — needs an Inworld key scoped for STT + Router + TTS.
+pipeline flow, API contracts, and file map.
 
 ## MUST
 

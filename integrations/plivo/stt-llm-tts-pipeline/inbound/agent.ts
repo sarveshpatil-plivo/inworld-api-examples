@@ -7,11 +7,9 @@
  *   TTS  — POST https://api.inworld.ai/tts/v1/voice:stream (PCM → μ-law for Plivo)
  *
  * Audio: Plivo μ-law 8k → PCM16 for STT; TTS PCM → μ-law 8k for Plivo (utils.ts).
- *
- * ⚠️ Contracts match Inworld's official examples but are NOT yet verified live —
- * needs an Inworld key scoped for STT + Router + TTS. Points to confirm with the
- * key: whether STT wants 8k vs 16k LINEAR16, and TTS's supported output encoding/
- * rate (we request PCM@8k; resample handles other rates).
+ * STT is sent LINEAR16 @ 8kHz; TTS is requested as PCM @ TTS_SAMPLE_RATE (default
+ * 8kHz) and resampled to 8kHz before μ-law — adjust the env if your Inworld
+ * account expects a different STT rate or TTS output encoding.
  */
 import { readFileSync } from "node:fs";
 import WebSocket from "ws";

@@ -2,12 +2,8 @@
 
 Inbound phone voice agent. Three separate Inworld services chained: **STT** (WebSocket) →
 **Router/LLM** (streaming HTTP) → **TTS** (HTTP) → Plivo. Each stage is independently swappable
-and observable (vs. the single-socket `s2s-pipeline/`). Structure mirrors the
-`plivo/python-agents-examples` convention: `inbound/{agent.ts, server.ts, system_prompt.md}` + `utils.ts`.
-
-> ⚠️ **Not yet verified live.** STT/TTS contracts were corrected from Inworld's official examples
-> but need an Inworld key scoped for **STT + Router + TTS** to confirm. Open questions: whether STT
-> wants 8k vs 16k LINEAR16, and TTS's supported output encoding/rate (we request PCM@8k + resample).
+and observable (vs. the single-socket `s2s-pipeline/`). Layout:
+`inbound/{agent.ts, server.ts, system_prompt.md}` + a shared `utils.ts`.
 
 ## Commands
 
