@@ -1,0 +1,24 @@
+{
+  "name": "plivo-inworld-tts",
+  "version": "0.1.0",
+  "description": "Plivo inbound voice agent spotlighting Inworld TTS (Deepgram STT + Gemini LLM + Inworld TTS)",
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch inbound/server.ts",
+    "build": "tsc",
+    "start": "node dist/inbound/server.js"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.7",
+    "express": "^5.1.0",
+    "plivo": "^4.71.0",
+    "ws": "^8.21.0"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.1",
+    "@types/node": "^22.15.29",
+    "@types/ws": "^8.18.1",
+    "tsx": "^4.22.4",
+    "typescript": "^5.9.2"
+  }
+}
