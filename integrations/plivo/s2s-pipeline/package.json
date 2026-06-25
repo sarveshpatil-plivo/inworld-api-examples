@@ -1,17 +1,17 @@
 {
-  "name": "plivo-inworld-realtime-api",
+  "name": "plivo-inworld-s2s-pipeline",
   "version": "0.1.0",
-  "description": "Plivo voice agent using Inworld Realtime API (STT + LLM + TTS)",
+  "description": "Plivo inbound voice agent using the Inworld Realtime speech-to-speech API",
   "type": "module",
-  "main": "dist/index.js",
   "scripts": {
-    "dev": "tsx watch src/index.ts",
+    "dev": "tsx watch inbound/server.ts",
     "build": "tsc",
-    "start": "node dist/index.js"
+    "start": "node dist/inbound/server.js"
   },
   "dependencies": {
     "dotenv": "^16.4.7",
     "express": "^5.1.0",
+    "plivo": "^4.78.0",
     "ws": "^8.21.0"
   },
   "devDependencies": {

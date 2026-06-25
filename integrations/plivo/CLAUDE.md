@@ -1,49 +1,50 @@
-# Plivo + Inworld Voice Agent
+# Plivo + Inworld Voice Agents
 
-Two self-contained examples connecting Plivo phone calls to Inworld:
+Self-contained inbound voice-agent examples connecting Plivo phone calls to Inworld. Structure
+follows the `plivo/python-agents-examples` convention: each example has
+`inbound/{agent.ts, server.ts, system_prompt.md}` + a shared `utils.ts`.
 
-- **`realtime-api/`** — single WebSocket to the Inworld Realtime API (STT + LLM + TTS in one).
-- **`cascaded-pipeline/`** — separate Inworld STT → Router/LLM → TTS services chained in a pipeline.
+- **`s2s-pipeline/`** — single WebSocket to the Inworld Realtime API (speech-to-speech: STT + LLM + TTS in one). **Done.**
+- **`stt-llm-tts-pipeline/`** — separate Inworld STT → Router/LLM → TTS services chained. *(Being migrated from the old `cascaded-pipeline/`; STT/TTS clients pending a Inworld key scoped for those services.)*
 
-Each folder has its own `README.md` (full setup/usage docs), `CLAUDE.md`, and `AGENTS.md`
-with details specific to that example. **Read the agent docs inside the folder you're editing** —
-this root file is only an overview.
+Each folder has its own `README.md`, `CLAUDE.md`, and `AGENTS.md`. **Read the agent docs inside
+the folder you're editing** — this root file is only an overview.
+
+## Responsibilities (per example)
+
+- **`inbound/server.ts`** — telephony + Plivo provisioning ONLY (`/answer`, `/ws`, `/hangup`, `/fallback`; `configurePlivoWebhooks` on startup).
+- **`inbound/agent.ts`** — pipeline orchestration + call state machine; owns the Inworld connection(s) and audio.
+- **`inbound/system_prompt.md`** — system instructions (override with `SYSTEM_PROMPT`).
+- **`utils.ts`** — shared helpers (phone normalization; audio conversion in pipelines that need it).
 
 ## Commands
 
 ```bash
-cd realtime-api && npm install && npm run dev
-cd cascaded-pipeline && npm install && npm run dev
+cd s2s-pipeline && npm install && npm run dev
 ```
 
 ## Rules
 
-- NEVER commit `.env` files or API keys
-- NEVER change audio sample rate from 8kHz - Plivo requires it
-- ALWAYS buffer 400+ bytes before sending audio (50ms minimum)
-- ALWAYS use base64 encoding for audio payloads
-- ALWAYS send `clearAudio` to Plivo AND cancel Inworld on barge-in
+- NEVER commit `.env` files or API keys.
+- NEVER change the audio sample rate from 8kHz μ-law — Plivo requires it.
+- `playAudio` MUST include `contentType: "audio/x-mulaw"` + `sampleRate: 8000`; send 160-byte (20ms) chunks.
+- Barge-in: gate on `agentSpeaking` — clear Plivo playback + cancel Inworld only while the agent is talking.
+- Keep telephony/provisioning in `server.ts` and pipeline/state-machine in `agent.ts`.
 
-## Audio
+## Plivo WebSocket (`/ws`)
 
-μ-law 8kHz mono. No transcoding. Pass through as-is.
+Send: `playAudio` (`{contentType, sampleRate, payload}`), `clearAudio`. Receive: `start`, `media`, `stop`.
 
-## Plivo WebSocket
+## Inworld Realtime (`wss://api.inworld.ai/api/v1/realtime/session`, `Basic` auth)
 
-Send: `playAudio`, `clearAudio`
-Receive: `start`, `media`, `stop`
+Send: `session.update`, `input_audio_buffer.append`, `response.create`, `response.cancel`.
+Receive: `session.created/updated`, `response.output_audio.delta/done`, `response.done`, `input_audio_buffer.speech_started`.
 
-## Inworld Realtime
+## File map (s2s-pipeline)
 
-Send: `session.update`, `input_audio_buffer.append`, `response.cancel`
-Receive: `session.created`, `response.output_audio.delta`, `input_audio_buffer.speech_started`
-
-## File Locations
-
-| Change | realtime-api/ | cascaded-pipeline/ |
-|--------|-----------|-----------|
-| System prompt / env | `src/config.ts` | `src/config.ts` |
-| Voice / LLM / STT config | `src/voice/inworld-realtime.ts` | `src/pipeline/inworld-{stt,llm,tts}.ts` |
-| Plivo XML (`/voice`) | `src/server/xml.ts` | `src/server/xml.ts` |
-| Call handling | `src/voice/call-handler.ts` | `src/pipeline/call-handler.ts` |
-| Server bootstrap | `src/index.ts` | `src/index.ts` |
+| Change | File |
+|--------|------|
+| System prompt | `inbound/system_prompt.md` |
+| Voice / LLM / STT config, state machine, barge-in, audio | `inbound/agent.ts` |
+| Plivo provisioning, `/answer` `/ws` `/hangup` `/fallback`, env | `inbound/server.ts` |
+| Phone normalization (shared) | `utils.ts` |
