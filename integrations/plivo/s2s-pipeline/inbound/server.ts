@@ -145,7 +145,10 @@ wss.on("connection", (ws: WebSocket, req) => {
     console.log(`[ws] Plivo stream started: callId=${callId}, streamId=${streamId}`);
 
     runAgent({ plivoWs: ws, callId, streamId, fromNumber: meta.from, toNumber: meta.to })
-      .catch((err) => console.error(`[ws] agent error: ${err.message}`));
+      .catch((err) => {
+        console.error(`[ws] agent error:`, err);
+        try { ws.close(); } catch { /* noop */ } // don't strand the caller on a dead handler
+      });
   });
 });
 

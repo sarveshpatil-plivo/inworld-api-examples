@@ -102,17 +102,24 @@ class InworldCascadedAgent {
         void this.speak("Hello! How can I help you today?");
       });
       stt.on("message", (data: Buffer) => this.onSttMessage(data));
-      stt.on("error", (err) => this.log("stt", `error: ${(err as Error).message}`));
+      stt.on("error", (err) => {
+        console.error(`[${this.callId}] [stt] socket error: ${(err as Error).message}`);
+        this.finish(); // STT is the only input path — a dead socket means a dead call
+      });
       stt.on("close", () => this.finish());
       stt.on("unexpected-response", (_req, res) => {
         let body = "";
         res.on("data", (c: Buffer) => (body += c.toString()));
-        res.on("end", () => { this.log("stt", `Inworld HTTP ${res.statusCode}: ${body}`); this.finish(); });
+        res.on("end", () => { console.error(`[${this.callId}] [stt] Inworld HTTP ${res.statusCode}: ${body}`); this.finish(); });
+        res.on("error", () => this.finish());
       });
 
       this.plivoWs.on("message", (data: Buffer) => this.onPlivoMessage(data));
       this.plivoWs.on("close", () => { this.log("plivo_rx", "Plivo WebSocket closed"); this.finish(); });
-      this.plivoWs.on("error", (err) => this.log("plivo_rx", `error: ${(err as Error).message}`));
+      this.plivoWs.on("error", (err) => {
+        console.error(`[${this.callId}] [plivo_rx] socket error: ${(err as Error).message}`);
+        this.finish();
+      });
     });
   }
 
@@ -143,7 +150,7 @@ class InworldCascadedAgent {
   private onSttMessage(data: Buffer): void {
     let msg: any;
     try { msg = JSON.parse(data.toString()); } catch { return; }
-    if (msg.error) { this.log("stt", `error frame: ${JSON.stringify(msg.error)}`); return; }
+    if (msg.error) { console.error(`[${this.callId}] [stt] error frame: ${JSON.stringify(msg.error)}`); return; }
     const t = msg?.result?.transcription;
     const text: string = t?.transcript || "";
     if (!text) return;
@@ -166,6 +173,11 @@ class InworldCascadedAgent {
   private async handleTurn(transcript: string): Promise<void> {
     if (this.processing) return;
     this.processing = true;
+    // NOTE: agentSpeaking is NOT set here. It flips true only once audio is
+    // actually sent to Plivo (sendChunkToPlivo). Setting it at turn start would
+    // make trailing STT transcripts of the user's just-finished utterance look
+    // like a barge-in and abort the reply before it begins. The 800ms silence
+    // debounce + "audio started" gating keeps barge-in tied to real interruptions.
     this.log("turn", `user: ${transcript}`);
     this.history.push({ role: "user", content: transcript });
 
@@ -191,6 +203,7 @@ class InworldCascadedAgent {
     } finally {
       this.processing = false;
       this.activeAbort = null;
+      this.agentSpeaking = false;
     }
   }
 
@@ -244,10 +257,8 @@ class InworldCascadedAgent {
       TTS_SAMPLE_RATE !== PLIVO_SAMPLE_RATE
         ? resamplePcm16(raw, TTS_SAMPLE_RATE, PLIVO_SAMPLE_RATE)
         : raw;
-    this.agentSpeaking = true;
     this.enqueueAudio(pcmToUlaw(pcm));
     this.flushRemainder();
-    this.agentSpeaking = false;
   }
 
   // ── plivo_tx: μ-law → 160-byte (20ms) playAudio frames ────────────────────
@@ -268,6 +279,8 @@ class InworldCascadedAgent {
 
   private sendChunkToPlivo(chunk: Buffer): void {
     if (this.plivoWs.readyState !== WebSocket.OPEN || !this.streamId) return;
+    // Audio is actively going to the caller → now barge-in should react to new speech.
+    this.agentSpeaking = true;
     this.plivoWs.send(JSON.stringify({
       event: "playAudio",
       media: { contentType: "audio/x-mulaw", sampleRate: 8000, payload: chunk.toString("base64") },
@@ -277,6 +290,7 @@ class InworldCascadedAgent {
   private bargeIn(): void {
     this.log("barge-in", "user interrupted — clearing playback");
     this.agentSpeaking = false;
+    if (this.silenceTimer) { clearTimeout(this.silenceTimer); this.silenceTimer = null; }
     this.outBuffer = Buffer.alloc(0);
     this.activeAbort?.abort();
     if (this.plivoWs.readyState === WebSocket.OPEN) {

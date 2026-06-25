@@ -99,18 +99,25 @@ class InworldS2SAgent {
 
       inworld.on("open", () => this.log("session", "Connected to Inworld Realtime API"));
       inworld.on("message", (data: Buffer) => this.onInworldMessage(data));
-      inworld.on("error", (err) => this.log("inworld_rx", `error: ${(err as Error).message}`));
+      inworld.on("error", (err) => {
+        console.error(`[${this.callId}] [inworld_rx] socket error: ${(err as Error).message}`);
+        finish(); // don't rely on a 'close' always following 'error'
+      });
       inworld.on("close", finish);
       inworld.on("unexpected-response", (_req, res) => {
         let body = "";
         res.on("data", (c: Buffer) => (body += c.toString()));
-        res.on("end", () => { this.log("session", `Inworld HTTP ${res.statusCode}: ${body}`); finish(); });
+        res.on("end", () => { console.error(`[${this.callId}] [session] Inworld HTTP ${res.statusCode}: ${body}`); finish(); });
+        res.on("error", () => finish());
       });
 
       // plivo_rx + stop handling
       this.plivoWs.on("message", (data: Buffer) => this.onPlivoMessage(data));
       this.plivoWs.on("close", () => { this.log("plivo_rx", "Plivo WebSocket closed"); finish(); });
-      this.plivoWs.on("error", (err) => this.log("plivo_rx", `error: ${(err as Error).message}`));
+      this.plivoWs.on("error", (err) => {
+        console.error(`[${this.callId}] [plivo_rx] socket error: ${(err as Error).message}`);
+        finish();
+      });
     });
   }
 
@@ -155,11 +162,15 @@ class InworldS2SAgent {
         this.sendToInworld({ type: "response.create" });
         break;
 
+      // Inworld has shipped both the long and short event names across
+      // versions (its own example handles both) — accept either.
+      case "response.audio.delta":
       case "response.output_audio.delta":
         this.agentSpeaking = true;
         this.enqueueAudio(msg.delta as string);
         break;
 
+      case "response.audio.done":
       case "response.output_audio.done":
         this.flushRemainder();
         break;
@@ -179,7 +190,7 @@ class InworldS2SAgent {
         break;
 
       case "error":
-        this.log("inworld_rx", `error: ${JSON.stringify(msg.error)}`);
+        console.error(`[${this.callId}] [inworld_rx] error frame: ${JSON.stringify(msg.error)}`);
         break;
     }
   }
