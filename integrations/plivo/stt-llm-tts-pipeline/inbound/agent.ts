@@ -64,6 +64,7 @@ class InworldCascadedAgent {
   private activeAbort: AbortController | null = null;
   private silenceTimer: NodeJS.Timeout | null = null;
   private pendingTranscript = "";
+  private pendingTurn: string | null = null;
   private resolveDone: (() => void) | null = null;
 
   constructor(opts: AgentOptions) {
@@ -171,7 +172,9 @@ class InworldCascadedAgent {
 
   // ── turn: LLM stream → per-sentence TTS → Plivo ───────────────────────────
   private async handleTurn(transcript: string): Promise<void> {
-    if (this.processing) return;
+    // A turn already running: don't drop the new utterance — queue it (latest
+    // wins) and run it when the current turn finishes.
+    if (this.processing) { this.pendingTurn = transcript; return; }
     this.processing = true;
     // NOTE: agentSpeaking is NOT set here. It flips true only once audio is
     // actually sent to Plivo (sendChunkToPlivo). Setting it at turn start would
@@ -204,6 +207,11 @@ class InworldCascadedAgent {
       this.processing = false;
       this.activeAbort = null;
       this.agentSpeaking = false;
+      if (this.pendingTurn) {
+        const next = this.pendingTurn;
+        this.pendingTurn = null;
+        void this.handleTurn(next);
+      }
     }
   }
 
@@ -253,6 +261,7 @@ class InworldCascadedAgent {
     });
     if (!res.ok) throw new Error(`TTS ${res.status}: ${(await res.text()).slice(0, 200)}`);
     const raw = new Uint8Array(await res.arrayBuffer());
+    if (raw.length % 2 !== 0) console.warn(`[${this.callId}] [tts] odd byte count (${raw.length}) — output may not be PCM16 as assumed`);
     const pcm =
       TTS_SAMPLE_RATE !== PLIVO_SAMPLE_RATE
         ? resamplePcm16(raw, TTS_SAMPLE_RATE, PLIVO_SAMPLE_RATE)
