@@ -18,21 +18,40 @@ import WebSocket from "ws";
 
 // ── Config (agent owns API keys, model/voice names, API URLs) ───────────────
 const INWORLD_API_KEY = process.env.INWORLD_API_KEY || "";
-const INWORLD_MODEL = process.env.INWORLD_MODEL || "openai/gpt-4.1-mini";
-const INWORLD_VOICE = process.env.INWORLD_VOICE || "Sarah";
-const INWORLD_TTS_MODEL = process.env.INWORLD_TTS_MODEL || "inworld-tts-2";
-const INWORLD_STT_MODEL =
-  process.env.INWORLD_STT_MODEL || "assemblyai/universal-streaming-multilingual";
+const INWORLD_MODEL = "openai/gpt-4.1-mini";
+const INWORLD_VOICE = "Sarah";
+const INWORLD_TTS_MODEL = "inworld-tts-2";
+const INWORLD_STT_MODEL = "inworld/inworld-stt-1";
 // Overridable so the agent can be pointed at a proxy/staging endpoint (and at a
 // local fake in the behavioral test). Defaults to the production Realtime API.
 const INWORLD_REALTIME_URL =
   process.env.INWORLD_REALTIME_URL || "wss://api.inworld.ai/api/v1/realtime/session";
-/** semantic_vad eagerness: low | medium | high | auto. Higher = quicker to detect
- *  the caller speaking → snappier barge-in (default high). Tune via env. */
-const INWORLD_VAD_EAGERNESS = process.env.INWORLD_VAD_EAGERNESS || "high";
+/** semantic_vad eagerness (low | medium | high | auto): higher = quicker to detect
+ *  the caller speaking → snappier barge-in. */
+const INWORLD_VAD_EAGERNESS = "high";
 
 /** 160 bytes = exactly 20ms of 8 kHz mono μ-law. */
 const PLIVO_CHUNK_SIZE = 160;
+
+/**
+ * Sample tool the model can call to hang up the call. Registered in
+ * `session.update`; invoked via a `response.function_call_arguments.done` event.
+ * See https://docs.inworld.ai/realtime/usage/using-realtime-models
+ */
+const END_CALL_TOOL = {
+  type: "function",
+  name: "end_call",
+  description:
+    "End the phone call. Call this only after saying a brief goodbye, when the " +
+    "caller indicates they are done or their request is fully resolved.",
+  parameters: {
+    type: "object",
+    properties: {
+      reason: { type: "string", description: "Short reason for ending, e.g. 'caller said goodbye'." },
+    },
+    required: ["reason"],
+  },
+};
 
 const SYSTEM_PROMPT =
   process.env.SYSTEM_PROMPT ||
@@ -45,6 +64,8 @@ interface AgentOptions {
   fromNumber?: string;
   toNumber?: string;
   systemPrompt?: string;
+  /** Hang up the live call (telephony lives in server.ts; the agent just asks). */
+  hangup?: () => Promise<void> | void;
 }
 
 /**
@@ -53,9 +74,9 @@ interface AgentOptions {
  * State machine:
  *   idle → connecting → greeting → listening ⇄ speaking
  *                                      ↑__________| (barge-in)
- * `agentSpeaking` gates barge-in: a user-speech event only interrupts/clears
- * playback while the agent is actually talking — this is what prevents the bot
- * from cutting itself off.
+ * `isSpeaking()` gates barge-in: a user-speech event only interrupts/clears
+ * playback while the agent is actually talking (generating or still draining
+ * queued audio) — this is what prevents the bot from cutting itself off.
  */
 class InworldS2SAgent {
   private readonly plivoWs: WebSocket;
@@ -63,12 +84,18 @@ class InworldS2SAgent {
   private readonly streamId: string;
   private readonly fromNumber: string;
   private readonly systemPrompt: string;
+  private readonly hangup?: () => Promise<void> | void;
 
   private inworld: WebSocket | null = null;
   private running = false;
   private responseGenerating = false;
   private outBuffer = Buffer.alloc(0);
   private txTimer: ReturnType<typeof setInterval> | null = null;
+
+  // end_call: hang up once the farewell has finished playing
+  private pendingHangup = false;
+  private hangupSilenceTicks = 0;
+  private hungUp = false;
 
   // metrics
   private turns = 0;
@@ -80,6 +107,7 @@ class InworldS2SAgent {
     this.streamId = opts.streamId;
     this.fromNumber = opts.fromNumber || "";
     this.systemPrompt = opts.systemPrompt || SYSTEM_PROMPT;
+    this.hangup = opts.hangup;
   }
 
   private log(stage: string, msg: string): void {
@@ -190,6 +218,15 @@ class InworldS2SAgent {
         this.turns += 1;
         break;
 
+      case "response.function_call_arguments.done":
+        // The model invoked a tool. arguments arrives as a JSON string.
+        this.onFunctionCall(
+          msg.call_id as string,
+          msg.name as string,
+          msg.arguments as string,
+        );
+        break;
+
       case "input_audio_buffer.speech_started":
         // Barge-in while audio is still generating OR queued for playback.
         if (this.isSpeaking()) this.triggerBargeIn();
@@ -233,6 +270,17 @@ class InworldS2SAgent {
         this.sendChunkToPlivo(this.outBuffer); // flush final sub-frame
         this.outBuffer = Buffer.alloc(0);
       }
+
+      // end_call: hang up after the farewell finishes (~600ms of silence). The
+      // grace window rides over the gap between the tool turn and the closing
+      // line, so we don't cut the goodbye off.
+      if (this.pendingHangup && !this.hungUp) {
+        if (!this.isSpeaking()) {
+          if (++this.hangupSilenceTicks >= 30) this.doHangup();
+        } else {
+          this.hangupSilenceTicks = 0;
+        }
+      }
     }, 20);
   }
 
@@ -259,6 +307,41 @@ class InworldS2SAgent {
     this.sendToInworld({ type: "response.cancel" });
   }
 
+  /**
+   * Handle a model tool call. Returns the result to Inworld (so the protocol is
+   * complete and the model can voice a closing line), then arms the hangup —
+   * `doHangup` fires once the farewell audio has drained (see the tx pump).
+   */
+  private onFunctionCall(callId: string, name: string, argsJson: string): void {
+    let args: Record<string, unknown> = {};
+    try { args = JSON.parse(argsJson || "{}"); } catch { /* keep {} */ }
+    this.log("tool", `${name}(${argsJson})`);
+
+    if (name === "end_call") {
+      // Return the result item, then let the model speak a closing line.
+      // (Inworld docs use `function_call_output` + `output`; the API-reference
+      //  page shows `function_call_result` + `content` — output is the
+      //  OpenAI-realtime-compatible shape, which Inworld follows.)
+      this.sendToInworld({
+        type: "conversation.item.create",
+        item: { type: "function_call_output", call_id: callId, output: JSON.stringify({ ok: true }) },
+      });
+      this.sendToInworld({ type: "response.create" });
+      this.pendingHangup = true;
+      this.log("end_call", `requested (${(args.reason as string) || "no reason"})`);
+    }
+  }
+
+  /** Hang up the live call once (idempotent). Telephony lives in server.ts. */
+  private doHangup(): void {
+    if (this.hungUp) return;
+    this.hungUp = true;
+    if (!this.hangup) { this.log("end_call", "no hangup handler — leaving call open"); return; }
+    this.log("end_call", "farewell played — hanging up");
+    Promise.resolve(this.hangup()).catch((err) =>
+      console.error(`[${this.callId}] [end_call] hangup failed: ${(err as Error).message}`));
+  }
+
   private sendSessionConfig(): void {
     let instructions = this.systemPrompt;
     if (this.fromNumber) instructions += `\n\n## Call Context\n- Caller: ${this.fromNumber}\n- Call ID: ${this.callId}`;
@@ -269,6 +352,8 @@ class InworldS2SAgent {
         model: INWORLD_MODEL,
         instructions,
         output_modalities: ["audio", "text"],
+        tools: [END_CALL_TOOL],
+        tool_choice: "auto",
         audio: {
           input: {
             format: "g711_ulaw",

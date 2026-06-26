@@ -33,13 +33,14 @@ Local testing needs a public tunnel: `ngrok http 3000` → put the HTTPS URL in 
 - `playAudio` MUST be `{ media: { contentType: "audio/x-mulaw", sampleRate: 8000, payload } }` —
   omitting contentType/sampleRate causes intermittent mid-response audio loss on Plivo.
 - Send audio in **160-byte (20ms) chunks** (`PLIVO_CHUNK_SIZE` in `agent.ts`).
-- Barge-in is gated on `agentSpeaking`: only clear playback / cancel when the agent is actually
+- Barge-in is gated on `isSpeaking()`: only clear playback / cancel when the agent is actually
   talking. Do not interrupt on every `speech_started`.
 
 ## State machine (agent.ts)
 
 `idle → connecting → greeting → listening ⇄ speaking` (barge-in returns speaking→listening).
-- `agentSpeaking=true` on first `response.output_audio.delta`, `false` on `response.done`.
+- `responseGenerating=true` on first `response.output_audio.delta`, `false` on `response.done`;
+  `isSpeaking()` stays true until the queued audio (`outBuffer`) finishes draining to Plivo.
 - Three logical streams: plivo_rx (`onPlivoMessage`), inworld_rx (`onInworldMessage`), plivo_tx (`enqueueAudio`/`sendChunkToPlivo`).
 
 ## Message contracts
@@ -54,8 +55,7 @@ Local testing needs a public tunnel: `ngrok http 3000` → put the HTTPS URL in 
 
 Required: `INWORLD_API_KEY`, `PUBLIC_URL`, `PLIVO_AUTH_ID`, `PLIVO_AUTH_TOKEN`,
 `PLIVO_PHONE_NUMBER` (for auto-provisioning).
-Optional: `SERVER_PORT` (3000), `DEFAULT_COUNTRY_CODE` (1), `SYSTEM_PROMPT`, `INWORLD_MODEL`,
-`INWORLD_VOICE`, `INWORLD_TTS_MODEL`, `INWORLD_STT_MODEL`.
+Optional: `SERVER_PORT` (3000), `SYSTEM_PROMPT`. Model/voice/STT/TTS are hardcoded in `agent.ts`.
 
 ## Verifying a change
 
@@ -65,5 +65,5 @@ Optional: `SERVER_PORT` (3000), `DEFAULT_COUNTRY_CODE` (1), `SYSTEM_PROMPT`, `IN
 
 ## Barge-in
 
-Uses Inworld's server-side `speech_started` gated on `agentSpeaking`. A client-side VAD (e.g.
+Uses Inworld's server-side `speech_started` gated on `isSpeaking()`. A client-side VAD (e.g.
 Silero) on the inbound audio can be added for finer interruption control.

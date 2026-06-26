@@ -7,12 +7,9 @@
  * differs from Plivo's 8 kHz). These are standard G.711 routines.
  */
 
-/** Default country code (digits only, no '+') used when a number omits one. */
-export const DEFAULT_COUNTRY_CODE = process.env.DEFAULT_COUNTRY_CODE || "1";
-
 export function normalizePhoneNumber(
   phone: string,
-  defaultCountryCode: string = DEFAULT_COUNTRY_CODE,
+  defaultCountryCode: string = "1",
 ): string {
   if (!phone) return "";
   const hadPlus = phone.trim().startsWith("+");

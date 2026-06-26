@@ -8,7 +8,7 @@ Speech-to-speech inbound voice agent over one Inworld Realtime WebSocket. See th
 - Keep `server.ts` (telephony + Plivo provisioning) and `agent.ts` (pipeline + state machine) separate.
 - Keep audio 8kHz μ-law (`g711_ulaw`) end to end — no transcoding.
 - Send `playAudio` as `{ media: { contentType: "audio/x-mulaw", sampleRate: 8000, payload } }` in 160-byte (20ms) chunks.
-- Gate barge-in on `agentSpeaking` (clear playback + `response.cancel` only while the agent is talking).
+- Gate barge-in on `isSpeaking()` (clear playback + `response.cancel` only while the agent is talking).
 - Run `npm run build` (tsc) and test over `ngrok http 3000` against a real Plivo call before claiming a change works.
 
 ## MUST NOT

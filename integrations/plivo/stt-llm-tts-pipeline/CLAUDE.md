@@ -30,8 +30,10 @@ Local testing needs a public tunnel: `ngrok http 3000` → put the HTTPS URL in 
    timer debounces end-of-utterance.
 3. On fire → `handleTurn`: stream the Router/LLM, split on sentence boundaries, and `speak()` each.
 4. `speak()` → TTS (PCM) → resample to 8k → `pcmToUlaw` → 160-byte `playAudio` frames.
-5. Any caller speech while `agentSpeaking` → `bargeIn()`: abort LLM/TTS + `clearAudio`.
+5. Any caller speech while `isSpeaking()` → `bargeIn()`: abort LLM/TTS + `clearAudio`.
 6. `history` (system/user/assistant) is maintained across turns.
+7. Tools: the Router may return `tool_calls` (OpenAI format). `end_call` arms a hangup that
+   fires once the farewell audio drains (`handleToolCall` → tx-pump → `doHangup`).
 
 ## API contracts (corrected from official examples)
 
@@ -39,22 +41,22 @@ Local testing needs a public tunnel: `ngrok http 3000` → put the HTTPS URL in 
   Config `{transcribeConfig:{modelId, audioEncoding:"LINEAR16", sampleRateHertz:8000, numberOfChannels:1, language}}`;
   frames `{audioChunk:{content:<base64 pcm16>}}`; responses `result.transcription.{transcript,isFinal}`.
 - **Router/LLM** — `POST https://api.inworld.ai/v1/chat/completions`, SSE, `choices[0].delta.content`.
-- **TTS** — `POST https://api.inworld.ai/tts/v1/voice:stream`, body
-  `{text, voice_id, model_id, audio_config:{audio_encoding:"PCM", sample_rate_hertz}}`.
+- **TTS** — `POST https://api.inworld.ai/tts/v1/voice`, body
+  `{text, voice_id, model_id, audio_config:{audio_encoding:"LINEAR16", sample_rate_hertz}}`;
+  returns JSON `{audioContent:<base64 LINEAR16>}` (may carry a WAV header — strip it).
 
 ## Rules
 
 - NEVER commit `.env` / API keys. Key needs **STT + Router + TTS** scopes.
 - `playAudio` MUST include `contentType:"audio/x-mulaw"` + `sampleRate:8000`; send 160-byte (20ms) chunks.
 - Synthesize TTS **per sentence** as the LLM streams — don't wait for the full response.
-- Barge-in (gated on `agentSpeaking`): `activeAbort.abort()` + `clearAudio`.
+- Barge-in (gated on `isSpeaking()`): `activeAbort.abort()` + `clearAudio`.
 - Keep telephony/provisioning in `server.ts`, pipeline in `agent.ts`.
 
 ## Env vars
 
 Required: `INWORLD_API_KEY` (STT+Router+TTS), `PUBLIC_URL`, `PLIVO_AUTH_ID`, `PLIVO_AUTH_TOKEN`, `PLIVO_PHONE_NUMBER`.
-Optional: `SERVER_PORT`, `DEFAULT_COUNTRY_CODE`, `SYSTEM_PROMPT`, `INWORLD_MODEL`, `INWORLD_STT_MODEL`,
-`INWORLD_TTS_MODEL`, `INWORLD_VOICE`, `TTS_SAMPLE_RATE`.
+Optional: `SERVER_PORT`, `SYSTEM_PROMPT`. Model/voice/STT/TTS are hardcoded in `agent.ts`.
 
 ## Verifying a change (needs STT+Router+TTS-scoped key)
 

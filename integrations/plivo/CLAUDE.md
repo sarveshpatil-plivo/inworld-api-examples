@@ -28,7 +28,7 @@ cd s2s-pipeline && npm install && npm run dev
 - NEVER commit `.env` files or API keys.
 - NEVER change the audio sample rate from 8kHz μ-law — Plivo requires it.
 - `playAudio` MUST include `contentType: "audio/x-mulaw"` + `sampleRate: 8000`; send 160-byte (20ms) chunks.
-- Barge-in: gate on `agentSpeaking` — clear Plivo playback + cancel Inworld only while the agent is talking.
+- Barge-in: gate on `isSpeaking()` — clear Plivo playback + cancel Inworld only while the agent is talking.
 - Keep telephony/provisioning in `server.ts` and pipeline/state-machine in `agent.ts`.
 
 ## Plivo WebSocket (`/ws`)

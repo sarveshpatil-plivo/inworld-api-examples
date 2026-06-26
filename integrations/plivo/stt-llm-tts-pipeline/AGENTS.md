@@ -9,7 +9,7 @@ pipeline flow, API contracts, and file map.
 - Convert audio at the boundaries: Plivo μ-law → `ulawToPcm` (LINEAR16) for STT; TTS PCM → `pcmToUlaw` (+ resample) for Plivo.
 - Send `playAudio` as `{ media: { contentType:"audio/x-mulaw", sampleRate:8000, payload } }` in 160-byte (20ms) chunks.
 - Stream the LLM and synthesize TTS **per sentence** — don't block on the full response.
-- Barge-in (gated on `agentSpeaking`): `activeAbort.abort()` + `clearAudio`.
+- Barge-in (gated on `isSpeaking()`): `activeAbort.abort()` + `clearAudio`.
 - Maintain `history` (system/user/assistant) across turns.
 - `npm run build` (tsc) must pass; verify end-to-end once a scoped key is available.
 

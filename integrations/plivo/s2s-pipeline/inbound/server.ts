@@ -25,6 +25,10 @@ const PLIVO_PHONE_NUMBER = process.env.PLIVO_PHONE_NUMBER || "";
 const PUBLIC_URL = process.env.PUBLIC_URL || "";
 const APP_NAME = "Inworld_S2S_Voice_Agent";
 
+// Shared Plivo client (provisioning + hanging up calls when the agent asks).
+const plivoClient =
+  PLIVO_AUTH_ID && PLIVO_AUTH_TOKEN ? new plivo.Client(PLIVO_AUTH_ID, PLIVO_AUTH_TOKEN) : null;
+
 // ── Plivo provisioning ──────────────────────────────────────────────────────
 async function configurePlivoWebhooks(): Promise<boolean> {
   const missing = [
@@ -39,7 +43,7 @@ async function configurePlivoWebhooks(): Promise<boolean> {
   }
 
   try {
-    const client = new plivo.Client(PLIVO_AUTH_ID, PLIVO_AUTH_TOKEN);
+    const client = plivoClient!;
     const answerUrl = `${PUBLIC_URL}/answer`;
     const hangupUrl = `${PUBLIC_URL}/hangup`;
     const fallbackUrl = `${PUBLIC_URL}/fallback`;
@@ -144,7 +148,17 @@ wss.on("connection", (ws: WebSocket, req) => {
     const streamId = start.start?.streamId || "";
     console.log(`[ws] Plivo stream started: callId=${callId}, streamId=${streamId}`);
 
-    runAgent({ plivoWs: ws, callId, streamId, fromNumber: meta.from, toNumber: meta.to })
+    runAgent({
+      plivoWs: ws,
+      callId,
+      streamId,
+      fromNumber: meta.from,
+      toNumber: meta.to,
+      // Hang up the live call via the Plivo REST API when the agent calls end_call.
+      hangup: plivoClient
+        ? () => plivoClient.calls.hangup(callId).then(() => undefined)
+        : undefined,
+    })
       .catch((err) => {
         console.error(`[ws] agent error:`, err);
         try { ws.close(); } catch { /* noop */ } // don't strand the caller on a dead handler

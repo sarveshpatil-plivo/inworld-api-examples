@@ -30,7 +30,7 @@ Sign in to the [Inworld Portal](https://platform.inworld.ai/), open your workspa
 
 **3. Get a Plivo phone number**
 
-In the [Plivo Console](https://console.plivo.com/), buy a phone number with Voice capability and copy your Auth ID and Auth Token from the dashboard.
+In the [Plivo Console](https://cx.plivo.com/), buy a phone number with Voice capability and copy your Auth ID and Auth Token from the dashboard.
 
 **4. Reserve an ngrok static domain**
 
@@ -53,6 +53,8 @@ PLIVO_AUTH_ID=your_plivo_auth_id
 PLIVO_AUTH_TOKEN=your_plivo_auth_token
 PLIVO_PHONE_NUMBER=+14155551234
 ```
+
+The Plivo Auth ID/Token and phone number let the server **auto-provision Plivo on startup** — it creates (or updates) the Plivo Application and points your number's voice webhook at this server, so a fresh number works without any manual console setup.
 
 **6. Install and run**
 

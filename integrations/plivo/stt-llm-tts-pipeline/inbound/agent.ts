@@ -4,7 +4,7 @@
  * Three Inworld services wired in sequence (each independently swappable):
  *   STT  — wss://api.inworld.ai/stt/v1/transcribe:streamBidirectional (LINEAR16)
  *   LLM  — POST https://api.inworld.ai/v1/chat/completions (OpenAI-compatible SSE)
- *   TTS  — POST https://api.inworld.ai/tts/v1/voice:stream (PCM → μ-law for Plivo)
+ *   TTS  — POST https://api.inworld.ai/tts/v1/voice (JSON audioContent → μ-law for Plivo)
  *
  * Audio: Plivo μ-law 8k → PCM16 for STT; TTS PCM → μ-law 8k for Plivo (utils.ts).
  * STT is sent LINEAR16 @ 8kHz; TTS is requested as PCM @ TTS_SAMPLE_RATE (default
@@ -17,10 +17,10 @@ import { ulawToPcm, pcmToUlaw, resamplePcm16 } from "../utils.js";
 
 // ── Config (agent owns API keys, models, voices, URLs) ──────────────────────
 const INWORLD_API_KEY = process.env.INWORLD_API_KEY || "";
-const INWORLD_LLM_MODEL = process.env.INWORLD_MODEL || "openai/gpt-4.1-mini";
-const INWORLD_STT_MODEL = process.env.INWORLD_STT_MODEL || "inworld/inworld-stt-1";
-const INWORLD_TTS_MODEL = process.env.INWORLD_TTS_MODEL || "inworld-tts-2";
-const INWORLD_VOICE = process.env.INWORLD_VOICE || "Sarah";
+const INWORLD_LLM_MODEL = "openai/gpt-4.1-mini";
+const INWORLD_STT_MODEL = "inworld/inworld-stt-1";
+const INWORLD_TTS_MODEL = "inworld-tts-2";
+const INWORLD_VOICE = "Sarah";
 
 const STT_URL = "wss://api.inworld.ai/stt/v1/transcribe:streamBidirectional";
 const LLM_URL = "https://api.inworld.ai/v1/chat/completions";
@@ -30,9 +30,35 @@ const AUTH = `Basic ${INWORLD_API_KEY}`;
 const PLIVO_SAMPLE_RATE = 8000;
 const PLIVO_CHUNK_SIZE = 160; // 20ms @ 8kHz μ-law
 /** TTS output sample rate we request as PCM; resampled to 8k before μ-law. */
-const TTS_SAMPLE_RATE = parseInt(process.env.TTS_SAMPLE_RATE || "8000", 10);
+const TTS_SAMPLE_RATE = 8000;
 /** Silence after a final transcript before we treat the turn as complete. */
 const END_OF_UTTERANCE_MS = 800;
+
+/**
+ * Sample tool the model can call to hang up. Router /chat/completions uses the
+ * OpenAI tool format (name/description/parameters nested under `function`).
+ */
+const END_CALL_TOOL = {
+  type: "function",
+  function: {
+    name: "end_call",
+    description:
+      "End the phone call. Call this only after saying a brief goodbye, when the " +
+      "caller indicates they are done or their request is fully resolved.",
+    parameters: {
+      type: "object",
+      properties: {
+        reason: { type: "string", description: "Short reason for ending, e.g. 'caller said goodbye'." },
+      },
+      required: ["reason"],
+    },
+  },
+};
+
+/** A streamed LLM chunk: either spoken text or a tool invocation. */
+type LlmChunk =
+  | { type: "text"; text: string }
+  | { type: "tool_call"; id: string; name: string; args: string };
 
 const SYSTEM_PROMPT =
   process.env.SYSTEM_PROMPT ||
@@ -46,12 +72,15 @@ interface AgentOptions {
   fromNumber?: string;
   toNumber?: string;
   systemPrompt?: string;
+  /** Hang up the live call (telephony lives in server.ts; the agent just asks). */
+  hangup?: () => Promise<void> | void;
 }
 
 class InworldCascadedAgent {
   private readonly plivoWs: WebSocket;
   private readonly callId: string;
   private readonly streamId: string;
+  private readonly hangup?: () => Promise<void> | void;
 
   private stt: WebSocket | null = null;
   private running = false;
@@ -65,10 +94,16 @@ class InworldCascadedAgent {
   private pendingTurn: string | null = null;
   private resolveDone: (() => void) | null = null;
 
+  // end_call: hang up once the farewell has finished playing
+  private pendingHangup = false;
+  private hangupSilenceTicks = 0;
+  private hungUp = false;
+
   constructor(opts: AgentOptions) {
     this.plivoWs = opts.plivoWs;
     this.callId = opts.callId;
     this.streamId = opts.streamId;
+    this.hangup = opts.hangup;
     let prompt = opts.systemPrompt || SYSTEM_PROMPT;
     if (opts.fromNumber) prompt += `\n\n## Call Context\n- Caller: ${opts.fromNumber}\n- Call ID: ${opts.callId}`;
     this.history = [{ role: "system", content: prompt }];
@@ -187,10 +222,12 @@ class InworldCascadedAgent {
     this.activeAbort = abort;
     let full = "";
     let sentence = "";
+    const toolCalls: { id: string; name: string; args: string }[] = [];
     try {
-      for await (const token of this.streamLLM(this.history, abort.signal)) {
-        full += token;
-        sentence += token;
+      for await (const chunk of this.streamLLM(this.history, abort.signal)) {
+        if (chunk.type === "tool_call") { toolCalls.push(chunk); continue; }
+        full += chunk.text;
+        sentence += chunk.text;
         const m = sentence.match(/^(.+?[.!?])\s+/);
         if (m) {
           sentence = sentence.slice(m[0].length);
@@ -199,6 +236,7 @@ class InworldCascadedAgent {
       }
       if (sentence.trim()) await this.speak(sentence.trim(), abort.signal);
       this.history.push({ role: "assistant", content: full });
+      for (const tc of toolCalls) this.handleToolCall(tc.name, tc.args);
     } catch (err) {
       if ((err as Error).name === "AbortError") this.log("turn", "cancelled (barge-in)");
       else this.log("turn", `error: ${(err as Error).message}`);
@@ -213,11 +251,14 @@ class InworldCascadedAgent {
     }
   }
 
-  private async *streamLLM(messages: Message[], signal: AbortSignal): AsyncGenerator<string> {
+  private async *streamLLM(messages: Message[], signal: AbortSignal): AsyncGenerator<LlmChunk> {
     const res = await fetch(LLM_URL, {
       method: "POST",
       headers: { Authorization: AUTH, "Content-Type": "application/json" },
-      body: JSON.stringify({ model: INWORLD_LLM_MODEL, messages, stream: true }),
+      body: JSON.stringify({
+        model: INWORLD_LLM_MODEL, messages, stream: true,
+        tools: [END_CALL_TOOL], tool_choice: "auto",
+      }),
       signal,
     });
     if (!res.ok) throw new Error(`Router ${res.status}: ${(await res.text()).slice(0, 200)}`);
@@ -225,6 +266,14 @@ class InworldCascadedAgent {
     if (!reader) throw new Error("Router: no response body");
     const decoder = new TextDecoder();
     let buf = "";
+    // Tool calls stream as fragments (id+name in the first delta, arguments in
+    // pieces); accumulate by index and emit once the stream ends.
+    const toolAcc: Record<number, { id: string; name: string; args: string }> = {};
+    const flushTools = function* (): Generator<LlmChunk> {
+      for (const tc of Object.values(toolAcc)) {
+        if (tc.name) yield { type: "tool_call", id: tc.id, name: tc.name, args: tc.args };
+      }
+    };
     for (;;) {
       const { done, value } = await reader.read();
       if (done) break;
@@ -234,13 +283,21 @@ class InworldCascadedAgent {
       for (const line of lines) {
         if (!line.startsWith("data: ")) continue;
         const data = line.slice(6).trim();
-        if (data === "[DONE]") return;
+        if (data === "[DONE]") { yield* flushTools(); return; }
         try {
-          const content = JSON.parse(data)?.choices?.[0]?.delta?.content;
-          if (content) yield content as string;
+          const delta = JSON.parse(data)?.choices?.[0]?.delta;
+          if (delta?.content) yield { type: "text", text: delta.content as string };
+          for (const tc of delta?.tool_calls ?? []) {
+            const i: number = tc.index ?? 0;
+            const acc = (toolAcc[i] ||= { id: "", name: "", args: "" });
+            if (tc.id) acc.id = tc.id;
+            if (tc.function?.name) acc.name = tc.function.name;
+            if (tc.function?.arguments) acc.args += tc.function.arguments;
+          }
         } catch { /* ignore keepalive/partial */ }
       }
     }
+    yield* flushTools();
   }
 
   /** Synthesize text via TTS and stream the audio to Plivo. */
@@ -299,6 +356,16 @@ class InworldCascadedAgent {
         this.sendChunkToPlivo(this.outBuffer); // flush final sub-frame after the turn
         this.outBuffer = Buffer.alloc(0);
       }
+
+      // end_call: hang up after the farewell finishes (~600ms idle). The grace
+      // window rides over gaps between sentences so we don't cut the goodbye off.
+      if (this.pendingHangup && !this.hungUp) {
+        if (!this.processing && this.outBuffer.length === 0) {
+          if (++this.hangupSilenceTicks >= 30) this.doHangup();
+        } else {
+          this.hangupSilenceTicks = 0;
+        }
+      }
     }, 20);
   }
 
@@ -318,6 +385,31 @@ class InworldCascadedAgent {
     if (this.plivoWs.readyState === WebSocket.OPEN) {
       this.plivoWs.send(JSON.stringify({ event: "clearAudio", stream_id: this.streamId }));
     }
+  }
+
+  /**
+   * Handle a model tool call. The spoken reply (e.g. the goodbye) already
+   * streamed as content this turn, so for the terminal `end_call` we just arm
+   * the hangup — `doHangup` fires once the audio has drained (see the tx pump).
+   */
+  private handleToolCall(name: string, argsJson: string): void {
+    let args: Record<string, unknown> = {};
+    try { args = JSON.parse(argsJson || "{}"); } catch { /* keep {} */ }
+    this.log("tool", `${name}(${argsJson})`);
+    if (name === "end_call") {
+      this.pendingHangup = true;
+      this.log("end_call", `requested (${(args.reason as string) || "no reason"})`);
+    }
+  }
+
+  /** Hang up the live call once (idempotent). Telephony lives in server.ts. */
+  private doHangup(): void {
+    if (this.hungUp) return;
+    this.hungUp = true;
+    if (!this.hangup) { this.log("end_call", "no hangup handler — leaving call open"); return; }
+    this.log("end_call", "farewell played — hanging up");
+    Promise.resolve(this.hangup()).catch((err) =>
+      console.error(`[${this.callId}] [end_call] hangup failed: ${(err as Error).message}`));
   }
 
   private sttSend(msg: object): void {

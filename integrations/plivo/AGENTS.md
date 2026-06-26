@@ -11,7 +11,7 @@ the folder you're editing.
 
 - Keep the split: `inbound/server.ts` = telephony + Plivo provisioning; `inbound/agent.ts` = pipeline + state machine; `inbound/system_prompt.md` = instructions; `utils.ts` = shared helpers.
 - Keep Plivo audio at 8kHz μ-law. Send `playAudio` as `{ media: { contentType:"audio/x-mulaw", sampleRate:8000, payload } }` in 160-byte (20ms) chunks.
-- Gate barge-in on `agentSpeaking` (clear playback + cancel only while the agent is talking).
+- Gate barge-in on `isSpeaking()` (clear playback + cancel only while the agent is talking).
 - `npm run build` (tsc) must pass before claiming a change works; test over `ngrok http 3000` against a real call.
 
 ## MUST NOT

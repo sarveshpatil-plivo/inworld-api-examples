@@ -8,9 +8,6 @@
  * (ulaw↔pcm, resample) live here in pipelines that need them.
  */
 
-/** Default country code (digits only, no '+') used when a number omits one. */
-export const DEFAULT_COUNTRY_CODE = process.env.DEFAULT_COUNTRY_CODE || "1";
-
 /**
  * Normalize a phone number to bare E.164 digits (no leading '+'), the form the
  * Plivo Numbers API expects. Returns "" if no digits are present.
@@ -19,7 +16,7 @@ export const DEFAULT_COUNTRY_CODE = process.env.DEFAULT_COUNTRY_CODE || "1";
  */
 export function normalizePhoneNumber(
   phone: string,
-  defaultCountryCode: string = DEFAULT_COUNTRY_CODE,
+  defaultCountryCode: string = "1",
 ): string {
   if (!phone) return "";
   const hadPlus = phone.trim().startsWith("+");
