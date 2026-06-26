@@ -24,7 +24,7 @@ const INWORLD_VOICE = process.env.INWORLD_VOICE || "Sarah";
 
 const STT_URL = "wss://api.inworld.ai/stt/v1/transcribe:streamBidirectional";
 const LLM_URL = "https://api.inworld.ai/v1/chat/completions";
-const TTS_URL = "https://api.inworld.ai/tts/v1/voice:stream";
+const TTS_URL = "https://api.inworld.ai/tts/v1/voice";
 const AUTH = `Basic ${INWORLD_API_KEY}`;
 
 const PLIVO_SAMPLE_RATE = 8000;
@@ -253,18 +253,23 @@ class InworldCascadedAgent {
         text,
         voice_id: INWORLD_VOICE,
         model_id: INWORLD_TTS_MODEL,
-        audio_config: { audio_encoding: "PCM", sample_rate_hertz: TTS_SAMPLE_RATE },
+        audio_config: { audio_encoding: "LINEAR16", sample_rate_hertz: TTS_SAMPLE_RATE },
       }),
       signal,
     });
-    if (!res.ok) throw new Error(`TTS ${res.status}: ${(await res.text()).slice(0, 200)}`);
-    const raw = new Uint8Array(await res.arrayBuffer());
-    if (raw.length % 2 !== 0) console.warn(`[${this.callId}] [tts] odd byte count (${raw.length}) — output may not be PCM16 as assumed`);
-    const pcm =
+    if (!res.ok) throw new Error(`Inworld TTS ${res.status}: ${(await res.text()).slice(0, 200)}`);
+    // Inworld TTS returns JSON: { audioContent: <base64 LINEAR16> } (sometimes with a WAV header).
+    const result = (await res.json()) as { audioContent?: string };
+    if (!result.audioContent) throw new Error("Inworld TTS: no audioContent in response");
+    let pcm: Uint8Array = Buffer.from(result.audioContent, "base64");
+    if (pcm.length > 44 && Buffer.from(pcm.subarray(0, 4)).toString("ascii") === "RIFF") {
+      pcm = pcm.subarray(44); // strip WAV header → raw PCM16
+    }
+    const out =
       TTS_SAMPLE_RATE !== PLIVO_SAMPLE_RATE
-        ? resamplePcm16(raw, TTS_SAMPLE_RATE, PLIVO_SAMPLE_RATE)
-        : raw;
-    this.enqueueAudio(pcmToUlaw(pcm));
+        ? resamplePcm16(pcm, TTS_SAMPLE_RATE, PLIVO_SAMPLE_RATE)
+        : pcm;
+    this.enqueueAudio(pcmToUlaw(out));
     this.flushRemainder();
   }
 
