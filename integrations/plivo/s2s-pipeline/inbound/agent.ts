@@ -18,7 +18,7 @@ import WebSocket from "ws";
 
 // ── Config (agent owns API keys, model/voice names, API URLs) ───────────────
 const INWORLD_API_KEY = process.env.INWORLD_API_KEY || "";
-const INWORLD_MODEL = "openai/gpt-4.1-mini";
+const INWORLD_MODEL = "google-ai-studio/gemini-2.5-flash";
 const INWORLD_VOICE = "Sarah";
 const INWORLD_TTS_MODEL = "inworld-tts-2";
 const INWORLD_STT_MODEL = "inworld/inworld-stt-1";
