@@ -55,9 +55,9 @@ class InworldCascadedAgent {
 
   private stt: WebSocket | null = null;
   private running = false;
-  private agentSpeaking = false;
   private processing = false;
   private outBuffer = Buffer.alloc(0);
+  private txTimer: ReturnType<typeof setInterval> | null = null;
   private history: Message[];
   private activeAbort: AbortController | null = null;
   private silenceTimer: NodeJS.Timeout | null = null;
@@ -85,6 +85,7 @@ class InworldCascadedAgent {
 
       const stt = new WebSocket(STT_URL, { headers: { Authorization: AUTH } });
       this.stt = stt;
+      this.startTxPump();
 
       stt.on("open", () => {
         this.log("stt", "connected → configuring");
@@ -126,6 +127,7 @@ class InworldCascadedAgent {
     if (!this.running) return;
     this.running = false;
     if (this.silenceTimer) clearTimeout(this.silenceTimer);
+    if (this.txTimer) { clearInterval(this.txTimer); this.txTimer = null; }
     this.activeAbort?.abort();
     try { this.stt?.close(); } catch { /* noop */ }
     this.log("session", "ended");
@@ -154,8 +156,8 @@ class InworldCascadedAgent {
     const text: string = t?.transcript || "";
     if (!text) return;
 
-    // Any caller speech while the agent is talking → barge-in.
-    if (this.agentSpeaking) this.bargeIn();
+    // Any caller speech while audio is still queued for playback → barge-in.
+    if (this.isSpeaking()) this.bargeIn();
 
     if (t.isFinal) {
       this.pendingTranscript = (this.pendingTranscript + " " + text).trim();
@@ -174,11 +176,10 @@ class InworldCascadedAgent {
     // wins) and run it when the current turn finishes.
     if (this.processing) { this.pendingTurn = transcript; return; }
     this.processing = true;
-    // NOTE: agentSpeaking is NOT set here. It flips true only once audio is
-    // actually sent to Plivo (sendChunkToPlivo). Setting it at turn start would
-    // make trailing STT transcripts of the user's just-finished utterance look
-    // like a barge-in and abort the reply before it begins. The 800ms silence
-    // debounce + "audio started" gating keeps barge-in tied to real interruptions.
+    // NOTE: barge-in is gated on isSpeaking() (outBuffer non-empty), which only
+    // becomes true once TTS audio is actually queued — so trailing STT transcripts
+    // of the user's just-finished utterance (arriving before any audio) don't
+    // self-cancel the reply. The 800ms silence debounce also helps.
     this.log("turn", `user: ${transcript}`);
     this.history.push({ role: "user", content: transcript });
 
@@ -204,7 +205,6 @@ class InworldCascadedAgent {
     } finally {
       this.processing = false;
       this.activeAbort = null;
-      this.agentSpeaking = false;
       if (this.pendingTurn) {
         const next = this.pendingTurn;
         this.pendingTurn = null;
@@ -270,29 +270,40 @@ class InworldCascadedAgent {
         ? resamplePcm16(pcm, TTS_SAMPLE_RATE, PLIVO_SAMPLE_RATE)
         : pcm;
     this.enqueueAudio(pcmToUlaw(out));
-    this.flushRemainder();
   }
 
-  // ── plivo_tx: μ-law → 160-byte (20ms) playAudio frames ────────────────────
+  // ── plivo_tx: paced 160-byte (20ms) playAudio frames ──────────────────────
+
+  /** True while there's still synthesized audio queued to play. */
+  private isSpeaking(): boolean {
+    return this.outBuffer.length > 0;
+  }
+
+  /** Append synthesized audio; the paced tx pump drains it to Plivo. */
   private enqueueAudio(ulaw: Buffer): void {
     this.outBuffer = Buffer.concat([this.outBuffer, ulaw]);
-    while (this.outBuffer.length >= PLIVO_CHUNK_SIZE) {
-      this.sendChunkToPlivo(this.outBuffer.subarray(0, PLIVO_CHUNK_SIZE));
-      this.outBuffer = this.outBuffer.subarray(PLIVO_CHUNK_SIZE);
-    }
   }
 
-  private flushRemainder(): void {
-    if (this.outBuffer.length > 0) {
-      this.sendChunkToPlivo(this.outBuffer);
-      this.outBuffer = Buffer.alloc(0);
-    }
+  /**
+   * Paced sender — one 20ms frame per tick. TTS returns whole sentences far
+   * faster than real time; without pacing the whole reply lands in Plivo's
+   * buffer and a barge-in can't stop it. Pacing keeps un-played audio in
+   * outBuffer, where barge-in drops it instantly.
+   */
+  private startTxPump(): void {
+    this.txTimer = setInterval(() => {
+      if (this.outBuffer.length >= PLIVO_CHUNK_SIZE) {
+        this.sendChunkToPlivo(this.outBuffer.subarray(0, PLIVO_CHUNK_SIZE));
+        this.outBuffer = this.outBuffer.subarray(PLIVO_CHUNK_SIZE);
+      } else if (this.outBuffer.length > 0 && !this.processing) {
+        this.sendChunkToPlivo(this.outBuffer); // flush final sub-frame after the turn
+        this.outBuffer = Buffer.alloc(0);
+      }
+    }, 20);
   }
 
   private sendChunkToPlivo(chunk: Buffer): void {
     if (this.plivoWs.readyState !== WebSocket.OPEN || !this.streamId) return;
-    // Audio is actively going to the caller → now barge-in should react to new speech.
-    this.agentSpeaking = true;
     this.plivoWs.send(JSON.stringify({
       event: "playAudio",
       media: { contentType: "audio/x-mulaw", sampleRate: 8000, payload: chunk.toString("base64") },
@@ -301,7 +312,6 @@ class InworldCascadedAgent {
 
   private bargeIn(): void {
     this.log("barge-in", "user interrupted — clearing playback");
-    this.agentSpeaking = false;
     if (this.silenceTimer) { clearTimeout(this.silenceTimer); this.silenceTimer = null; }
     this.outBuffer = Buffer.alloc(0);
     this.activeAbort?.abort();
