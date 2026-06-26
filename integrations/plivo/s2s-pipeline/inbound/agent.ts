@@ -152,11 +152,6 @@ class InworldS2SAgent {
     let msg: Record<string, unknown>;
     try { msg = JSON.parse(data.toString()); } catch { return; }
 
-    // DIAGNOSTIC: trace every Inworld event type (skip the high-frequency audio delta)
-    if (msg.type !== "response.output_audio.delta" && msg.type !== "response.audio.delta") {
-      this.log("evt", String(msg.type));
-    }
-
     switch (msg.type) {
       case "session.created":
         this.log("inworld_rx", "session.created → configuring");
@@ -194,7 +189,6 @@ class InworldS2SAgent {
 
       case "input_audio_buffer.speech_started":
         // Barge-in while audio is still generating OR queued for playback.
-        this.log("evt", `speech_started (isSpeaking=${this.isSpeaking()}, buffered=${this.outBuffer.length}B)`);
         if (this.isSpeaking()) this.triggerBargeIn();
         break;
 
