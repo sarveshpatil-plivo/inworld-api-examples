@@ -23,7 +23,10 @@ const INWORLD_VOICE = process.env.INWORLD_VOICE || "Sarah";
 const INWORLD_TTS_MODEL = process.env.INWORLD_TTS_MODEL || "inworld-tts-2";
 const INWORLD_STT_MODEL =
   process.env.INWORLD_STT_MODEL || "assemblyai/universal-streaming-multilingual";
-const INWORLD_REALTIME_URL = "wss://api.inworld.ai/api/v1/realtime/session";
+// Overridable so the agent can be pointed at a proxy/staging endpoint (and at a
+// local fake in the behavioral test). Defaults to the production Realtime API.
+const INWORLD_REALTIME_URL =
+  process.env.INWORLD_REALTIME_URL || "wss://api.inworld.ai/api/v1/realtime/session";
 /** semantic_vad eagerness: low | medium | high | auto. Higher = quicker to detect
  *  the caller speaking → snappier barge-in (default high). Tune via env. */
 const INWORLD_VAD_EAGERNESS = process.env.INWORLD_VAD_EAGERNESS || "high";
