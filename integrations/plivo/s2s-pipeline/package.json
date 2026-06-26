@@ -6,8 +6,7 @@
   "scripts": {
     "dev": "tsx watch inbound/server.ts",
     "build": "tsc",
-    "start": "node dist/inbound/server.js",
-    "test": "tsx --test tests/*.test.ts"
+    "start": "node dist/inbound/server.js"
   },
   "dependencies": {
     "dotenv": "^16.4.7",

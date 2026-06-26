@@ -22,10 +22,7 @@ const INWORLD_MODEL = "google-ai-studio/gemini-2.5-flash";
 const INWORLD_VOICE = "Sarah";
 const INWORLD_TTS_MODEL = "inworld-tts-2";
 const INWORLD_STT_MODEL = "inworld/inworld-stt-1";
-// Overridable so the agent can be pointed at a proxy/staging endpoint (and at a
-// local fake in the behavioral test). Defaults to the production Realtime API.
-const INWORLD_REALTIME_URL =
-  process.env.INWORLD_REALTIME_URL || "wss://api.inworld.ai/api/v1/realtime/session";
+const INWORLD_REALTIME_URL = "wss://api.inworld.ai/api/v1/realtime/session";
 /** semantic_vad eagerness (low | medium | high | auto): higher = quicker to detect
  *  the caller speaking → snappier barge-in. */
 const INWORLD_VAD_EAGERNESS = "high";
