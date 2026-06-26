@@ -83,9 +83,16 @@ const app = express();
 app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
 
+// Reflects whether startup auto-provisioning mapped the number (see GET /).
+let provisioned = false;
+
 app.get("/", (_req, res) => {
   const phone = normalizePhoneNumber(PLIVO_PHONE_NUMBER);
-  res.json({ status: "ok", service: "inworld-stt-llm-tts-inbound", phone_number: phone ? `+${phone}` : "not configured" });
+  res.status(provisioned ? 200 : 503).json({
+    status: provisioned ? "ok" : "setup-incomplete",
+    service: "inworld-stt-llm-tts-inbound",
+    phone_number: phone ? `+${phone}` : "not configured",
+  });
 });
 
 function answerHandler(req: express.Request, res: express.Response) {
@@ -134,7 +141,8 @@ wss.on("connection", (ws: WebSocket, req) => {
     try { start = JSON.parse(data.toString()); } catch { ws.close(); return; }
     if (start.event !== "start") { console.error(`[ws] expected start, got ${start.event}`); ws.close(); return; }
 
-    const callId = start.start?.callId || meta.call_uuid || "unknown";
+    const resolvedCallId = start.start?.callId || meta.call_uuid;
+    const callId = resolvedCallId || "unknown";
     const streamId = start.start?.streamId || "";
     console.log(`[ws] Plivo stream started: callId=${callId}, streamId=${streamId}`);
 
@@ -144,9 +152,10 @@ wss.on("connection", (ws: WebSocket, req) => {
       streamId,
       fromNumber: meta.from,
       toNumber: meta.to,
-      // Hang up the live call via the Plivo REST API when the agent calls end_call.
-      hangup: plivoClient
-        ? () => plivoClient.calls.hangup(callId).then(() => undefined)
+      // Hang up the live call via the Plivo REST API when the agent calls
+      // end_call. Only wire it when we have a real CallUUID to act on.
+      hangup: plivoClient && resolvedCallId
+        ? () => plivoClient.calls.hangup(resolvedCallId).then(() => undefined)
         : undefined,
     })
       .catch((err) => {
@@ -157,12 +166,20 @@ wss.on("connection", (ws: WebSocket, req) => {
 });
 
 async function main() {
+  // Fail fast on the most common setup mistake rather than booting "healthy"
+  // and failing every call later with a swallowed 401.
+  if (!process.env.INWORLD_API_KEY) {
+    console.error("[server] INWORLD_API_KEY is not set — the agent cannot authenticate to Inworld (needs STT+Router+TTS scopes). Set it in .env.");
+    process.exit(1);
+  }
+
   if (PLIVO_PHONE_NUMBER && PUBLIC_URL) {
     console.log("[server] Configuring Plivo webhooks...");
-    if (await configurePlivoWebhooks()) {
+    provisioned = await configurePlivoWebhooks();
+    if (provisioned) {
       console.log(`[server] Ready! Call +${normalizePhoneNumber(PLIVO_PHONE_NUMBER)} to test`);
     } else {
-      console.warn("[server] Plivo auto-config failed — configure the number manually.");
+      console.warn("[server] ⚠ SETUP INCOMPLETE — Plivo auto-config failed; inbound calls will not route until the number is mapped. Configure it manually or fix the error above.");
     }
   } else {
     console.log("[server] Set PUBLIC_URL + PLIVO_PHONE_NUMBER to enable Plivo auto-config.");

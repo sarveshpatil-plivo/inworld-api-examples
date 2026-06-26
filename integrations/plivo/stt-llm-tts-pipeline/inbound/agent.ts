@@ -60,6 +60,19 @@ type LlmChunk =
   | { type: "text"; text: string }
   | { type: "tool_call"; id: string; name: string; args: string };
 
+/**
+ * Split a streaming text buffer into complete sentences to synthesize, keeping
+ * the trailing (possibly incomplete) fragment as `rest`. Uses Intl.Segmenter so
+ * abbreviations ("Dr.", "U.S.") and decimals ("$4.50") don't trigger false
+ * splits the way a naive /[.!?]\s/ regex would.
+ */
+function splitSentences(buf: string): { speak: string[]; rest: string } {
+  const parts = [...new Intl.Segmenter("en", { granularity: "sentence" }).segment(buf)].map((s) => s.segment);
+  if (parts.length <= 1) return { speak: [], rest: buf };
+  const rest = parts.pop() ?? "";
+  return { speak: parts.map((p) => p.trim()).filter(Boolean), rest };
+}
+
 const SYSTEM_PROMPT =
   process.env.SYSTEM_PROMPT ||
   readFileSync(new URL("./system_prompt.md", import.meta.url), "utf-8").trim();
@@ -97,6 +110,7 @@ class InworldCascadedAgent {
   // end_call: hang up once the farewell has finished playing
   private pendingHangup = false;
   private hangupSilenceTicks = 0;
+  private hangupArmedAt = 0;
   private hungUp = false;
 
   constructor(opts: AgentOptions) {
@@ -133,8 +147,8 @@ class InworldCascadedAgent {
             language: "en-US",
           },
         });
-        // Greet the caller once STT is ready.
-        void this.speak("Hello! How can I help you today?");
+        // Greet the caller once STT is ready (trySpeak swallows a TTS hiccup).
+        void this.trySpeak("Hello! How can I help you today?");
       });
       stt.on("message", (data: Buffer) => this.onSttMessage(data));
       stt.on("error", (err) => {
@@ -165,6 +179,9 @@ class InworldCascadedAgent {
     if (this.txTimer) { clearInterval(this.txTimer); this.txTimer = null; }
     this.activeAbort?.abort();
     try { this.stt?.close(); } catch { /* noop */ }
+    // Close the Plivo leg too — an STT-side end (e.g. a 401) must not leave the
+    // caller on a silent, still-open line.
+    try { if (this.plivoWs.readyState === WebSocket.OPEN) this.plivoWs.close(); } catch { /* noop */ }
     this.log("session", "ended");
     this.resolveDone?.();
   }
@@ -172,7 +189,8 @@ class InworldCascadedAgent {
   // ── plivo_rx: caller μ-law → PCM16 → STT ──────────────────────────────────
   private onPlivoMessage(data: Buffer): void {
     let msg: { event?: string; media?: { payload?: string } };
-    try { msg = JSON.parse(data.toString()); } catch { return; }
+    try { msg = JSON.parse(data.toString()); }
+    catch { this.log("plivo_rx", `dropped unparseable frame: ${data.toString().slice(0, 120)}`); return; }
     if (msg.event === "media" && msg.media?.payload) {
       const pcm = ulawToPcm(Buffer.from(msg.media.payload, "base64"));
       this.sttSend({ audioChunk: { content: pcm.toString("base64") } });
@@ -185,7 +203,8 @@ class InworldCascadedAgent {
   // ── stt_rx: transcripts → barge-in / turn handling ────────────────────────
   private onSttMessage(data: Buffer): void {
     let msg: any;
-    try { msg = JSON.parse(data.toString()); } catch { return; }
+    try { msg = JSON.parse(data.toString()); }
+    catch { console.error(`[${this.callId}] [stt] dropped unparseable frame: ${data.toString().slice(0, 120)}`); return; }
     if (msg.error) { console.error(`[${this.callId}] [stt] error frame: ${JSON.stringify(msg.error)}`); return; }
     const t = msg?.result?.transcription;
     const text: string = t?.transcript || "";
@@ -222,25 +241,39 @@ class InworldCascadedAgent {
     this.activeAbort = abort;
     let full = "";
     let sentence = "";
+    let spokeSomething = false;
     const toolCalls: { id: string; name: string; args: string }[] = [];
     try {
       for await (const chunk of this.streamLLM(this.history, abort.signal)) {
         if (chunk.type === "tool_call") { toolCalls.push(chunk); continue; }
         full += chunk.text;
         sentence += chunk.text;
-        const m = sentence.match(/^(.+?[.!?])\s+/);
-        if (m) {
-          sentence = sentence.slice(m[0].length);
-          await this.speak(m[1], abort.signal);
+        const { speak, rest } = splitSentences(sentence);
+        for (const s of speak) {
+          if (await this.trySpeak(s, abort.signal)) spokeSomething = true;
         }
+        sentence = rest;
       }
-      if (sentence.trim()) await this.speak(sentence.trim(), abort.signal);
-      this.history.push({ role: "assistant", content: full });
+      if (sentence.trim() && await this.trySpeak(sentence.trim(), abort.signal)) spokeSomething = true;
+
+      // end_call but no goodbye was spoken this turn (model returned a tool call
+      // with empty content) → synthesize one so we never hang up on dead air.
+      if (toolCalls.some((tc) => tc.name === "end_call") && !spokeSomething) {
+        await this.trySpeak("Thanks for calling. Goodbye!", abort.signal);
+      }
       for (const tc of toolCalls) this.handleToolCall(tc.name, tc.args);
     } catch (err) {
-      if ((err as Error).name === "AbortError") this.log("turn", "cancelled (barge-in)");
-      else this.log("turn", `error: ${(err as Error).message}`);
+      if ((err as Error).name === "AbortError") {
+        this.log("turn", "cancelled (barge-in)");
+      } else {
+        console.error(`[${this.callId}] [turn] pipeline error: ${(err as Error).message}`);
+        // Give the caller feedback instead of silent dead air.
+        await this.trySpeak("Sorry, I ran into a problem. Could you say that again?");
+      }
     } finally {
+      // Always record the assistant turn — even a partial, interrupted reply —
+      // so history stays role-alternating and the model knows what it said.
+      if (full.trim()) this.history.push({ role: "assistant", content: full });
       this.processing = false;
       this.activeAbort = null;
       if (this.pendingTurn) {
@@ -248,6 +281,21 @@ class InworldCascadedAgent {
         this.pendingTurn = null;
         void this.handleTurn(next);
       }
+    }
+  }
+
+  /**
+   * Synthesize one segment, swallowing a transient TTS failure (so one bad
+   * sentence doesn't abort the whole turn) while letting AbortError propagate
+   * for barge-in. Returns true if audio was produced.
+   */
+  private async trySpeak(text: string, signal?: AbortSignal): Promise<boolean> {
+    if (!text.trim()) return false;
+    try { await this.speak(text, signal); return true; }
+    catch (err) {
+      if ((err as Error).name === "AbortError") throw err;
+      this.log("tts", `skipped (TTS failed): ${(err as Error).message}`);
+      return false;
     }
   }
 
@@ -284,17 +332,20 @@ class InworldCascadedAgent {
         if (!line.startsWith("data: ")) continue;
         const data = line.slice(6).trim();
         if (data === "[DONE]") { yield* flushTools(); return; }
-        try {
-          const delta = JSON.parse(data)?.choices?.[0]?.delta;
-          if (delta?.content) yield { type: "text", text: delta.content as string };
-          for (const tc of delta?.tool_calls ?? []) {
-            const i: number = tc.index ?? 0;
-            const acc = (toolAcc[i] ||= { id: "", name: "", args: "" });
-            if (tc.id) acc.id = tc.id;
-            if (tc.function?.name) acc.name = tc.function.name;
-            if (tc.function?.arguments) acc.args += tc.function.arguments;
-          }
-        } catch { /* ignore keepalive/partial */ }
+        // Scope the try to JSON.parse only — a malformed/contract-drifted frame
+        // is a real anomaly worth logging, not a silently-dropped keepalive
+        // (true cross-read partials are already held back by the buffer above).
+        let delta: any;
+        try { delta = JSON.parse(data)?.choices?.[0]?.delta; }
+        catch { this.log("llm", `SSE parse skip: ${data.slice(0, 120)}`); continue; }
+        if (delta?.content) yield { type: "text", text: delta.content as string };
+        for (const tc of delta?.tool_calls ?? []) {
+          const i: number = tc.index ?? 0;
+          const acc = (toolAcc[i] ||= { id: "", name: "", args: "" });
+          if (tc.id) acc.id = tc.id;
+          if (tc.function?.name) acc.name = tc.function.name;
+          if (tc.function?.arguments) acc.args += tc.function.arguments;
+        }
       }
     }
     yield* flushTools();
@@ -358,9 +409,13 @@ class InworldCascadedAgent {
       }
 
       // end_call: hang up after the farewell finishes (~600ms idle). The grace
-      // window rides over gaps between sentences so we don't cut the goodbye off.
+      // window rides over gaps between sentences so we don't cut the goodbye off;
+      // the absolute backstop guarantees we never leave the call open if a turn
+      // stalls.
       if (this.pendingHangup && !this.hungUp) {
-        if (!this.processing && this.outBuffer.length === 0) {
+        if (Date.now() - this.hangupArmedAt > 5000) {
+          this.doHangup(); // backstop
+        } else if (!this.processing && this.outBuffer.length === 0) {
           if (++this.hangupSilenceTicks >= 30) this.doHangup();
         } else {
           this.hangupSilenceTicks = 0;
@@ -380,6 +435,9 @@ class InworldCascadedAgent {
   private bargeIn(): void {
     this.log("barge-in", "user interrupted — clearing playback");
     if (this.silenceTimer) { clearTimeout(this.silenceTimer); this.silenceTimer = null; }
+    // Drop the half-detected utterance too, or its leftover words get prepended
+    // to the caller's next turn.
+    this.pendingTranscript = "";
     this.outBuffer = Buffer.alloc(0);
     this.activeAbort?.abort();
     if (this.plivoWs.readyState === WebSocket.OPEN) {
@@ -398,18 +456,29 @@ class InworldCascadedAgent {
     this.log("tool", `${name}(${argsJson})`);
     if (name === "end_call") {
       this.pendingHangup = true;
+      this.hangupArmedAt = Date.now();
       this.log("end_call", `requested (${(args.reason as string) || "no reason"})`);
     }
   }
 
-  /** Hang up the live call once (idempotent). Telephony lives in server.ts. */
+  /**
+   * Hang up the live call once (idempotent). Telephony lives in server.ts, so we
+   * call the injected hangup. If it's missing or fails, fall back to closing the
+   * Plivo socket (→ finish()) so the caller is never left on a silent open line.
+   */
   private doHangup(): void {
     if (this.hungUp) return;
     this.hungUp = true;
-    if (!this.hangup) { this.log("end_call", "no hangup handler — leaving call open"); return; }
+    if (!this.hangup) {
+      console.warn(`[${this.callId}] [end_call] no hangup handler — closing the media stream to drop the call`);
+      try { this.plivoWs.close(); } catch { /* noop */ }
+      return;
+    }
     this.log("end_call", "farewell played — hanging up");
-    Promise.resolve(this.hangup()).catch((err) =>
-      console.error(`[${this.callId}] [end_call] hangup failed: ${(err as Error).message}`));
+    Promise.resolve(this.hangup()).catch((err) => {
+      console.error(`[${this.callId}] [end_call] hangup failed, closing media stream: ${(err as Error).message}`);
+      try { this.plivoWs.close(); } catch { /* noop */ }
+    });
   }
 
   private sttSend(msg: object): void {

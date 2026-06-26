@@ -48,8 +48,15 @@ Local testing needs a public tunnel: `ngrok http 3000` → put the HTTPS URL in 
 **Plivo WS** (`/ws`): receive `start`/`media`/`stop`; send `playAudio`, `clearAudio`.
 **Inworld Realtime** (`wss://api.inworld.ai/api/v1/realtime/session`, `Basic` auth): send
 `session.update`, `input_audio_buffer.append`, `response.create`, `response.cancel`,
-`conversation.item.create`; receive `session.created/updated`, `response.output_audio.delta/done`,
-`response.done`, `input_audio_buffer.speech_started`, `...input_audio_transcription.completed`, `error`.
+`conversation.item.create` (incl. `function_call_output` for tool results); receive `session.created/updated`,
+`response.output_audio.delta/done`, `response.done`, `response.function_call_arguments.done` (tool call →
+drives `end_call`), `input_audio_buffer.speech_started`, `...input_audio_transcription.completed`, `error`.
+
+## Tools
+
+`end_call` is registered in `session.update`. On `response.function_call_arguments.done` the agent returns a
+`function_call_output`, lets the model speak a goodbye, then hangs up via the server-provided callback once the
+farewell drains (with an absolute backstop).
 
 ## Env vars
 

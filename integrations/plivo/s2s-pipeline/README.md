@@ -83,9 +83,10 @@ On startup the server **auto-configures Plivo** — it creates (or updates) a Pl
 ## How it works
 
 - An inbound call hits `/answer`, and the server responds with Plivo XML instructing Plivo to open a bidirectional audio stream.
-- Plivo opens a WebSocket to `/ws` and begins forwarding call audio.
-- The server shuttles μ-law 8 kHz frames between Plivo and Inworld in both directions, paced at 20 ms.
-- On detected user speech, the server clears Plivo's audio buffer and cancels the in-flight Inworld response so barge-in feels natural.
+- Plivo opens a WebSocket to `/ws`; the server hands it to the agent once the stream starts.
+- The agent shuttles μ-law 8 kHz frames between Plivo and Inworld in both directions, pacing playback to Plivo at 20 ms per frame.
+- On detected user speech, the agent clears Plivo's audio buffer and cancels the in-flight Inworld response so barge-in feels natural.
+- When the conversation ends, the model calls the `end_call` tool and the server hangs up the call via the Plivo API.
 
 ```xml
 <Response>

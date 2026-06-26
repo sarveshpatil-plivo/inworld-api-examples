@@ -23,12 +23,12 @@ pipeline flow, API contracts, and file map.
 ## API contracts (corrected — see CLAUDE.md)
 
 - STT: `wss://api.inworld.ai/stt/v1/transcribe:streamBidirectional` — `transcribeConfig` / `audioChunk` / `result.transcription`.
-- LLM: `POST /v1/chat/completions` — SSE `choices[0].delta.content`.
-- TTS: `POST /tts/v1/voice:stream` — `{text, voice_id, model_id, audio_config}`.
+- LLM: `POST /v1/chat/completions` — SSE `choices[0].delta.content` and `delta.tool_calls` (OpenAI tool format; `end_call`).
+- TTS: `POST /tts/v1/voice` — `{text, voice_id, model_id, audio_config}` → JSON `{audioContent: <base64 LINEAR16>}`.
 
 ## Debugging
 
 - `[stt] Inworld HTTP <status>` / `error frame` → scope or config mismatch (8k vs 16k, encoding).
-- `[tts] TTS <status>` → scope or unsupported `audio_encoding`/`sample_rate_hertz`.
+- `[tts] speaking: …` then a thrown `Inworld TTS <status>` (logged as `[turn] pipeline error` or `[tts] skipped`) → scope or unsupported `audio_encoding`/`sample_rate_hertz`.
 - No reply after transcript → Router scope/model, or the 800ms silence timer never fired (no `isFinal`).
 - Audio garbled → sample-rate mismatch; confirm `TTS_SAMPLE_RATE` matches what TTS actually returns.

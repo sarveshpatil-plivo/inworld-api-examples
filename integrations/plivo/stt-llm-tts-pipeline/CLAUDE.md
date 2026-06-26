@@ -18,7 +18,7 @@ Local testing needs a public tunnel: `ngrok http 3000` → put the HTTPS URL in 
 
 ## Responsibilities
 
-- **`inbound/server.ts`** — telephony + Plivo provisioning ONLY (`configurePlivoWebhooks`, `/answer`, `/ws`, `/hangup`, `/fallback`). Identical to s2s-pipeline.
+- **`inbound/server.ts`** — telephony + Plivo provisioning ONLY (`configurePlivoWebhooks`, `/answer`, `/ws`, `/hangup`, `/fallback`). Mirrors the s2s-pipeline server (same structure; hands off to the cascaded agent).
 - **`inbound/agent.ts`** — the cascaded pipeline + state machine. Owns the STT socket, the Router/LLM stream, and the TTS calls.
 - **`inbound/system_prompt.md`** — system instructions (override via `SYSTEM_PROMPT`).
 - **`utils.ts`** — phone normalization **+ G.711 μ-law↔PCM + resample** (this pipeline transcodes; S2S doesn't).
@@ -40,7 +40,8 @@ Local testing needs a public tunnel: `ngrok http 3000` → put the HTTPS URL in 
 - **STT** — `wss://api.inworld.ai/stt/v1/transcribe:streamBidirectional`, `Basic` auth.
   Config `{transcribeConfig:{modelId, audioEncoding:"LINEAR16", sampleRateHertz:8000, numberOfChannels:1, language}}`;
   frames `{audioChunk:{content:<base64 pcm16>}}`; responses `result.transcription.{transcript,isFinal}`.
-- **Router/LLM** — `POST https://api.inworld.ai/v1/chat/completions`, SSE, `choices[0].delta.content`.
+- **Router/LLM** — `POST https://api.inworld.ai/v1/chat/completions`, SSE, `choices[0].delta.content`
+  and `choices[0].delta.tool_calls` (OpenAI tool format; streamed fragments accumulated by index → `end_call`).
 - **TTS** — `POST https://api.inworld.ai/tts/v1/voice`, body
   `{text, voice_id, model_id, audio_config:{audio_encoding:"LINEAR16", sample_rate_hertz}}`;
   returns JSON `{audioContent:<base64 LINEAR16>}` (may carry a WAV header — strip it).
@@ -62,4 +63,4 @@ Optional: `SERVER_PORT`, `SYSTEM_PROMPT`. Model/voice/STT/TTS are hardcoded in `
 
 1. Fill `.env`; `ngrok http 3000`; `npm run dev` (auto-provisions Plivo).
 2. Call the number; confirm greeting, transcription logs (`[turn] user: ...`), a spoken reply, and barge-in.
-3. If STT/TTS error: check the `[stt]`/`[tts]` logs for the real status — likely a scope/format mismatch to adjust.
+3. If STT errors: check the `[stt]` logs (`Inworld HTTP <status>` / `error frame`). If TTS errors: it throws and surfaces as `[turn] pipeline error` (or `[tts] skipped` for a single sentence) — likely a scope/format mismatch to adjust.
