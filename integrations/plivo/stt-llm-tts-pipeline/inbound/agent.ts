@@ -33,6 +33,8 @@ const PLIVO_CHUNK_SIZE = 160; // 20ms @ 8kHz μ-law
 const TTS_SAMPLE_RATE = 8000;
 /** Silence after a final transcript before we treat the turn as complete. */
 const END_OF_UTTERANCE_MS = 800;
+/** Opening line; kept as a const so the spoken and history-recorded text match. */
+const GREETING = "Hello! How can I help you today?";
 
 /**
  * Sample tool the model can call to hang up. Router /chat/completions uses the
@@ -60,6 +62,11 @@ type LlmChunk =
   | { type: "text"; text: string }
   | { type: "tool_call"; id: string; name: string; args: string };
 
+const SENTENCE_SEGMENTER = new Intl.Segmenter("en", { granularity: "sentence" });
+/** A bare list/enumeration marker that Intl.Segmenter treats as its own
+ *  "sentence" (e.g. "1.", "2)", "-", "•") — fold it into the next segment. */
+const LIST_MARKER = /^\s*(?:\d+[.)]|[-*•])\s*$/;
+
 /**
  * Split a streaming text buffer into complete sentences to synthesize, keeping
  * the trailing (possibly incomplete) fragment as `rest`. Uses Intl.Segmenter so
@@ -67,10 +74,20 @@ type LlmChunk =
  * splits the way a naive /[.!?]\s/ regex would.
  */
 function splitSentences(buf: string): { speak: string[]; rest: string } {
-  const parts = [...new Intl.Segmenter("en", { granularity: "sentence" }).segment(buf)].map((s) => s.segment);
+  const parts = [...SENTENCE_SEGMENTER.segment(buf)].map((s) => s.segment);
   if (parts.length <= 1) return { speak: [], rest: buf };
   const rest = parts.pop() ?? "";
-  return { speak: parts.map((p) => p.trim()).filter(Boolean), rest };
+  // Merge bare list markers into the following sentence so "1. Do this." isn't
+  // split into "1." + "Do this." (two tiny TTS calls with an unnatural pause).
+  const speak: string[] = [];
+  let carry = "";
+  for (const p of parts) {
+    if (LIST_MARKER.test(p)) { carry += p; continue; }
+    const s = (carry + p).trim();
+    if (s) speak.push(s);
+    carry = "";
+  }
+  return { speak, rest: carry + rest };
 }
 
 const SYSTEM_PROMPT =
@@ -147,8 +164,8 @@ class InworldCascadedAgent {
             language: "en-US",
           },
         });
-        // Greet the caller once STT is ready (trySpeak swallows a TTS hiccup).
-        void this.trySpeak("Hello! How can I help you today?");
+        // Greet the caller once STT is ready.
+        void this.greet();
       });
       stt.on("message", (data: Buffer) => this.onSttMessage(data));
       stt.on("error", (err) => {
@@ -224,6 +241,17 @@ class InworldCascadedAgent {
     }
   }
 
+  /** Speak the opening line and record it, so the model doesn't re-greet. A
+   *  greeting that fails to synthesize is usually a fatal config signal (e.g. a
+   *  TTS key without the right scope), so surface it loudly rather than swallow. */
+  private async greet(): Promise<void> {
+    if (await this.trySpeak(GREETING)) {
+      this.history.push({ role: "assistant", content: GREETING });
+    } else {
+      console.error(`[${this.callId}] [tts] greeting failed to synthesize — check the Inworld TTS scope/format`);
+    }
+  }
+
   // ── turn: LLM stream → per-sentence TTS → Plivo ───────────────────────────
   private async handleTurn(transcript: string): Promise<void> {
     // A turn already running: don't drop the new utterance — queue it (latest
@@ -257,9 +285,10 @@ class InworldCascadedAgent {
       if (sentence.trim() && await this.trySpeak(sentence.trim(), abort.signal)) spokeSomething = true;
 
       // end_call but no goodbye was spoken this turn (model returned a tool call
-      // with empty content) → synthesize one so we never hang up on dead air.
+      // with empty content) → synthesize one so we don't hang up on dead air.
       if (toolCalls.some((tc) => tc.name === "end_call") && !spokeSomething) {
-        await this.trySpeak("Thanks for calling. Goodbye!", abort.signal);
+        if (await this.trySpeak("Thanks for calling. Goodbye!", abort.signal)) spokeSomething = true;
+        if (!spokeSomething) console.error(`[${this.callId}] [end_call] hanging up with no farewell — TTS unavailable`);
       }
       for (const tc of toolCalls) this.handleToolCall(tc.name, tc.args);
     } catch (err) {
@@ -276,10 +305,14 @@ class InworldCascadedAgent {
       if (full.trim()) this.history.push({ role: "assistant", content: full });
       this.processing = false;
       this.activeAbort = null;
-      if (this.pendingTurn) {
+      // Don't start a queued turn once end_call has armed the hangup — the
+      // terminal intent wins, and a new turn would race the hangup backstop.
+      if (this.pendingTurn && !this.pendingHangup) {
         const next = this.pendingTurn;
         this.pendingTurn = null;
         void this.handleTurn(next);
+      } else if (this.pendingHangup) {
+        this.pendingTurn = null;
       }
     }
   }
@@ -317,9 +350,11 @@ class InworldCascadedAgent {
     // Tool calls stream as fragments (id+name in the first delta, arguments in
     // pieces); accumulate by index and emit once the stream ends.
     const toolAcc: Record<number, { id: string; name: string; args: string }> = {};
+    const logDrop = (m: string) => this.log("llm", m);
     const flushTools = function* (): Generator<LlmChunk> {
       for (const tc of Object.values(toolAcc)) {
         if (tc.name) yield { type: "tool_call", id: tc.id, name: tc.name, args: tc.args };
+        else if (tc.id || tc.args) logDrop(`dropped tool fragment with no name (id=${tc.id})`);
       }
     };
     for (;;) {
@@ -368,6 +403,8 @@ class InworldCascadedAgent {
     if (!res.ok) throw new Error(`Inworld TTS ${res.status}: ${(await res.text()).slice(0, 200)}`);
     // Inworld TTS returns JSON: { audioContent: <base64 LINEAR16> } (sometimes with a WAV header).
     const result = (await res.json()) as { audioContent?: string };
+    // A barge-in during the fetch/parse must not enqueue now-stale audio.
+    if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
     if (!result.audioContent) throw new Error("Inworld TTS: no audioContent in response");
     let pcm: Uint8Array = Buffer.from(result.audioContent, "base64");
     if (pcm.length > 44 && Buffer.from(pcm.subarray(0, 4)).toString("ascii") === "RIFF") {
@@ -438,6 +475,14 @@ class InworldCascadedAgent {
     // Drop the half-detected utterance too, or its leftover words get prepended
     // to the caller's next turn.
     this.pendingTranscript = "";
+    // The caller re-engaged, so cancel any end_call hangup the interrupted turn
+    // armed — otherwise clearing outBuffer here would let the idle counter race
+    // to doHangup and disconnect the caller who just started talking.
+    if (this.pendingHangup && !this.hungUp) {
+      this.pendingHangup = false;
+      this.hangupSilenceTicks = 0;
+      this.hangupArmedAt = 0;
+    }
     this.outBuffer = Buffer.alloc(0);
     this.activeAbort?.abort();
     if (this.plivoWs.readyState === WebSocket.OPEN) {
