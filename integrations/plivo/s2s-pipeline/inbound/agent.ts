@@ -27,9 +27,6 @@ const INWORLD_REALTIME_URL = "wss://api.inworld.ai/api/v1/realtime/session";
 /** semantic_vad eagerness: low | medium | high | auto. Higher = quicker to detect
  *  the caller speaking → snappier barge-in (default high). Tune via env. */
 const INWORLD_VAD_EAGERNESS = process.env.INWORLD_VAD_EAGERNESS || "high";
-/** Turn-detection type: "semantic_vad" (smart, waits for a phrase) or
- *  "server_vad" (acoustic onset → barge-in on the first word, more trigger-happy). */
-const INWORLD_VAD_TYPE = process.env.INWORLD_VAD_TYPE || "semantic_vad";
 
 /** 160 bytes = exactly 20ms of 8 kHz mono μ-law. */
 const PLIVO_CHUNK_SIZE = 160;
@@ -268,26 +265,6 @@ class InworldS2SAgent {
   private sendSessionConfig(): void {
     let instructions = this.systemPrompt;
     if (this.fromNumber) instructions += `\n\n## Call Context\n- Caller: ${this.fromNumber}\n- Call ID: ${this.callId}`;
-
-    // semantic_vad = smart but waits ~a phrase before confirming a turn/interrupt.
-    // server_vad = acoustic onset → barge-in on the first word, but more trigger-happy.
-    const turnDetection =
-      INWORLD_VAD_TYPE === "server_vad"
-        ? {
-            type: "server_vad",
-            threshold: parseFloat(process.env.INWORLD_VAD_THRESHOLD || "0.5"),
-            prefix_padding_ms: 200,
-            silence_duration_ms: 500,
-            create_response: true,
-            interrupt_response: true,
-          }
-        : {
-            type: "semantic_vad",
-            eagerness: INWORLD_VAD_EAGERNESS,
-            create_response: true,
-            interrupt_response: true,
-          };
-
     this.sendToInworld({
       type: "session.update",
       session: {
@@ -299,7 +276,12 @@ class InworldS2SAgent {
           input: {
             format: "g711_ulaw",
             transcription: { model: INWORLD_STT_MODEL },
-            turn_detection: turnDetection,
+            turn_detection: {
+              type: "semantic_vad",
+              eagerness: INWORLD_VAD_EAGERNESS,
+              create_response: true,
+              interrupt_response: true,
+            },
           },
           output: { format: "g711_ulaw", model: INWORLD_TTS_MODEL, voice: INWORLD_VOICE },
         },
