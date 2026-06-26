@@ -92,16 +92,3 @@ On startup the server **auto-configures Plivo** — it creates (or updates) a Pl
   </Stream>
 </Response>
 ```
-
-## Test your integration
-
-Call your Plivo number. The bot should greet you and hold a conversation, and you can talk over it to interrupt.
-
-## Example implementation
-
-[**Plivo + Realtime API (s2s-pipeline)**](https://github.com/inworld-ai/inworld-api-examples/tree/main/integrations/plivo/s2s-pipeline) — a complete Node.js reference implementation that bridges Plivo audio streaming to the Realtime API. The pipeline lives in `inbound/agent.ts`, the telephony + Plivo provisioning in `inbound/server.ts`.
-
-## Further reading
-
-- [Realtime WebSocket Protocol Reference](https://docs.inworld.ai/realtime/connect/websocket)
-- [Plivo Audio Streaming](https://www.plivo.com/docs/voice/xml/stream/)
