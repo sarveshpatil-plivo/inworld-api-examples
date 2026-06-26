@@ -24,6 +24,9 @@ const INWORLD_TTS_MODEL = process.env.INWORLD_TTS_MODEL || "inworld-tts-2";
 const INWORLD_STT_MODEL =
   process.env.INWORLD_STT_MODEL || "assemblyai/universal-streaming-multilingual";
 const INWORLD_REALTIME_URL = "wss://api.inworld.ai/api/v1/realtime/session";
+/** semantic_vad eagerness: low | medium | high | auto. Higher = quicker to detect
+ *  the caller speaking → snappier barge-in (default high). Tune via env. */
+const INWORLD_VAD_EAGERNESS = process.env.INWORLD_VAD_EAGERNESS || "high";
 
 /** 160 bytes = exactly 20ms of 8 kHz mono μ-law. */
 const PLIVO_CHUNK_SIZE = 160;
@@ -275,7 +278,7 @@ class InworldS2SAgent {
             transcription: { model: INWORLD_STT_MODEL },
             turn_detection: {
               type: "semantic_vad",
-              eagerness: "auto",
+              eagerness: INWORLD_VAD_EAGERNESS,
               create_response: true,
               interrupt_response: true,
             },
