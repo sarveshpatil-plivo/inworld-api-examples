@@ -60,8 +60,9 @@ class InworldS2SAgent {
 
   private inworld: WebSocket | null = null;
   private running = false;
-  private agentSpeaking = false;
+  private responseGenerating = false;
   private outBuffer = Buffer.alloc(0);
+  private txTimer: ReturnType<typeof setInterval> | null = null;
 
   // metrics
   private turns = 0;
@@ -88,10 +89,12 @@ class InworldS2SAgent {
         headers: { Authorization: `Basic ${INWORLD_API_KEY}` },
       });
       this.inworld = inworld;
+      this.startTxPump();
 
       const finish = () => {
         if (!this.running) return;
         this.running = false;
+        if (this.txTimer) { clearInterval(this.txTimer); this.txTimer = null; }
         this.log("session", `ended: ${this.turns} turns, ${this.bargeIns} barge-ins`);
         try { inworld.close(); } catch { /* noop */ }
         resolve();
@@ -166,23 +169,24 @@ class InworldS2SAgent {
       // versions (its own example handles both) — accept either.
       case "response.audio.delta":
       case "response.output_audio.delta":
-        this.agentSpeaking = true;
+        this.responseGenerating = true;
         this.enqueueAudio(msg.delta as string);
         break;
 
       case "response.audio.done":
       case "response.output_audio.done":
-        this.flushRemainder();
+        // tail is drained by the paced tx pump; nothing to flush here
         break;
 
       case "response.done":
-        this.agentSpeaking = false;
+        // generation finished, but playback (outBuffer) may still be draining
+        this.responseGenerating = false;
         this.turns += 1;
         break;
 
       case "input_audio_buffer.speech_started":
-        // Barge-in: only act while the agent is actually speaking.
-        if (this.agentSpeaking) this.triggerBargeIn();
+        // Barge-in while audio is still generating OR queued for playback.
+        if (this.isSpeaking()) this.triggerBargeIn();
         break;
 
       case "conversation.item.input_audio_transcription.completed":
@@ -195,21 +199,35 @@ class InworldS2SAgent {
     }
   }
 
-  // ── plivo_tx: queued audio → 160-byte (20ms) playAudio frames ─────────────
+  // ── plivo_tx: paced 160-byte (20ms) playAudio frames ──────────────────────
+
+  /** True while the agent is generating audio or still has audio queued to play. */
+  private isSpeaking(): boolean {
+    return this.responseGenerating || this.outBuffer.length > 0;
+  }
+
+  /** Append synthesized audio; the paced tx pump drains it to Plivo. */
   private enqueueAudio(base64Audio: string): void {
     if (!base64Audio) return;
     this.outBuffer = Buffer.concat([this.outBuffer, Buffer.from(base64Audio, "base64")]);
-    while (this.outBuffer.length >= PLIVO_CHUNK_SIZE) {
-      this.sendChunkToPlivo(this.outBuffer.subarray(0, PLIVO_CHUNK_SIZE));
-      this.outBuffer = this.outBuffer.subarray(PLIVO_CHUNK_SIZE);
-    }
   }
 
-  private flushRemainder(): void {
-    if (this.outBuffer.length > 0) {
-      this.sendChunkToPlivo(this.outBuffer);
-      this.outBuffer = Buffer.alloc(0);
-    }
+  /**
+   * Paced sender — one 20ms frame per tick. Inworld emits audio faster than real
+   * time, so without pacing the whole response lands in Plivo's buffer and a
+   * barge-in can't stop it. Pacing keeps the un-played audio here in outBuffer,
+   * where barge-in drops it instantly.
+   */
+  private startTxPump(): void {
+    this.txTimer = setInterval(() => {
+      if (this.outBuffer.length >= PLIVO_CHUNK_SIZE) {
+        this.sendChunkToPlivo(this.outBuffer.subarray(0, PLIVO_CHUNK_SIZE));
+        this.outBuffer = this.outBuffer.subarray(PLIVO_CHUNK_SIZE);
+      } else if (this.outBuffer.length > 0 && !this.responseGenerating) {
+        this.sendChunkToPlivo(this.outBuffer); // flush final sub-frame
+        this.outBuffer = Buffer.alloc(0);
+      }
+    }, 20);
   }
 
   private sendChunkToPlivo(chunk: Buffer): void {
@@ -227,7 +245,7 @@ class InworldS2SAgent {
   private triggerBargeIn(): void {
     this.log("barge-in", "user interrupted — clearing playback");
     this.bargeIns += 1;
-    this.agentSpeaking = false;
+    this.responseGenerating = false;
     this.outBuffer = Buffer.alloc(0);
     if (this.plivoWs.readyState === WebSocket.OPEN) {
       this.plivoWs.send(JSON.stringify({ event: "clearAudio", stream_id: this.streamId }));
