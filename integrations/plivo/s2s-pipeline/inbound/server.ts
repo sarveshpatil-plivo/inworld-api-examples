@@ -161,7 +161,6 @@ wss.on("connection", (ws: WebSocket, req) => {
       callId,
       streamId,
       fromNumber: meta.from,
-      toNumber: meta.to,
       // Hang up the live call via the Plivo REST API when the agent calls
       // end_call. Only wire it when we have a real CallUUID to act on.
       hangup: plivoClient && resolvedCallId

@@ -18,14 +18,17 @@ import WebSocket from "ws";
 
 // ── Config (agent owns API keys, model/voice names, API URLs) ───────────────
 const INWORLD_API_KEY = process.env.INWORLD_API_KEY || "";
-const INWORLD_MODEL = "google-ai-studio/gemini-2.5-flash";
-const INWORLD_VOICE = "Sarah";
-const INWORLD_TTS_MODEL = "inworld-tts-2";
-const INWORLD_STT_MODEL = "inworld/inworld-stt-1";
+// Pipeline config — overridable via env. The Realtime API is a pipeline (STT +
+// LLM + TTS), so these are all configurable; names drop the "inworld" prefix
+// since in a pipeline it's ambiguous which stage they'd belong to.
+const LLM_MODEL = process.env.LLM_MODEL || "google-ai-studio/gemini-2.5-flash";
+const STT_MODEL = process.env.STT_MODEL || "inworld/inworld-stt-1";
+const TTS_MODEL = process.env.TTS_MODEL || "inworld-tts-2";
+const VOICE = process.env.VOICE || "Sarah";
 const INWORLD_REALTIME_URL = "wss://api.inworld.ai/api/v1/realtime/session";
 /** semantic_vad eagerness (low | medium | high | auto): higher = quicker to detect
  *  the caller speaking → snappier barge-in. */
-const INWORLD_VAD_EAGERNESS = "high";
+const VAD_EAGERNESS = process.env.VAD_EAGERNESS || "high";
 
 /** 160 bytes = exactly 20ms of 8 kHz mono μ-law. */
 const PLIVO_CHUNK_SIZE = 160;
@@ -59,7 +62,6 @@ interface AgentOptions {
   callId: string;
   streamId: string;
   fromNumber?: string;
-  toNumber?: string;
   systemPrompt?: string;
   /** Hang up the live call (telephony lives in server.ts; the agent just asks). */
   hangup?: () => Promise<void> | void;
@@ -380,7 +382,7 @@ class InworldS2SAgent {
       type: "session.update",
       session: {
         type: "realtime",
-        model: INWORLD_MODEL,
+        model: LLM_MODEL,
         instructions,
         output_modalities: ["audio", "text"],
         tools: [END_CALL_TOOL],
@@ -388,15 +390,15 @@ class InworldS2SAgent {
         audio: {
           input: {
             format: "g711_ulaw",
-            transcription: { model: INWORLD_STT_MODEL },
+            transcription: { model: STT_MODEL },
             turn_detection: {
               type: "semantic_vad",
-              eagerness: INWORLD_VAD_EAGERNESS,
+              eagerness: VAD_EAGERNESS,
               create_response: true,
               interrupt_response: true,
             },
           },
-          output: { format: "g711_ulaw", model: INWORLD_TTS_MODEL, voice: INWORLD_VOICE },
+          output: { format: "g711_ulaw", model: TTS_MODEL, voice: VOICE },
         },
       },
     });

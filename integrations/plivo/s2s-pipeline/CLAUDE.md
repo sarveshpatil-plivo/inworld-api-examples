@@ -62,7 +62,7 @@ farewell drains (with an absolute backstop).
 
 Required: `INWORLD_API_KEY`, `PUBLIC_URL`, `PLIVO_AUTH_ID`, `PLIVO_AUTH_TOKEN`,
 `PLIVO_PHONE_NUMBER` (for auto-provisioning).
-Optional: `SERVER_PORT` (3000), `SYSTEM_PROMPT`. Model/voice/STT/TTS are hardcoded in `agent.ts`.
+Optional (override pipeline defaults): `SERVER_PORT` (3000), `SYSTEM_PROMPT`, `LLM_MODEL`, `STT_MODEL`, `TTS_MODEL`, `VOICE`, `VAD_EAGERNESS`.
 
 ## Verifying a change
 

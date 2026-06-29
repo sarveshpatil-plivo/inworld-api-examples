@@ -17,10 +17,12 @@ import { ulawToPcm, pcmToUlaw, resamplePcm16 } from "../utils.js";
 
 // ── Config (agent owns API keys, models, voices, URLs) ──────────────────────
 const INWORLD_API_KEY = process.env.INWORLD_API_KEY || "";
-const INWORLD_LLM_MODEL = "google-ai-studio/gemini-2.5-flash";
-const INWORLD_STT_MODEL = "inworld/inworld-stt-1";
-const INWORLD_TTS_MODEL = "inworld-tts-2";
-const INWORLD_VOICE = "Sarah";
+// Pipeline config — overridable via env. Names drop the "inworld" prefix since
+// in a cascaded pipeline it's ambiguous which stage they'd belong to.
+const LLM_MODEL = process.env.LLM_MODEL || "google-ai-studio/gemini-2.5-flash";
+const STT_MODEL = process.env.STT_MODEL || "inworld/inworld-stt-1";
+const TTS_MODEL = process.env.TTS_MODEL || "inworld-tts-2";
+const VOICE = process.env.VOICE || "Sarah";
 
 const STT_URL = "wss://api.inworld.ai/stt/v1/transcribe:streamBidirectional";
 const LLM_URL = "https://api.inworld.ai/v1/chat/completions";
@@ -30,7 +32,7 @@ const AUTH = `Basic ${INWORLD_API_KEY}`;
 const PLIVO_SAMPLE_RATE = 8000;
 const PLIVO_CHUNK_SIZE = 160; // 20ms @ 8kHz μ-law
 /** TTS output sample rate we request as PCM; resampled to 8k before μ-law. */
-const TTS_SAMPLE_RATE = 8000;
+const TTS_SAMPLE_RATE = parseInt(process.env.TTS_SAMPLE_RATE || "8000", 10);
 /** Silence after a final transcript before we treat the turn as complete. */
 const END_OF_UTTERANCE_MS = 800;
 /** Opening line; kept as a const so the spoken and history-recorded text match. */
@@ -100,7 +102,6 @@ interface AgentOptions {
   callId: string;
   streamId: string;
   fromNumber?: string;
-  toNumber?: string;
   systemPrompt?: string;
   /** Hang up the live call (telephony lives in server.ts; the agent just asks). */
   hangup?: () => Promise<void> | void;
@@ -157,7 +158,7 @@ class InworldCascadedAgent {
         this.log("stt", "connected → configuring");
         this.sttSend({
           transcribeConfig: {
-            modelId: INWORLD_STT_MODEL,
+            modelId: STT_MODEL,
             audioEncoding: "LINEAR16",
             sampleRateHertz: PLIVO_SAMPLE_RATE,
             numberOfChannels: 1,
@@ -337,7 +338,7 @@ class InworldCascadedAgent {
       method: "POST",
       headers: { Authorization: AUTH, "Content-Type": "application/json" },
       body: JSON.stringify({
-        model: INWORLD_LLM_MODEL, messages, stream: true,
+        model: LLM_MODEL, messages, stream: true,
         tools: [END_CALL_TOOL], tool_choice: "auto",
       }),
       signal,
@@ -394,8 +395,8 @@ class InworldCascadedAgent {
       headers: { Authorization: AUTH, "Content-Type": "application/json" },
       body: JSON.stringify({
         text,
-        voice_id: INWORLD_VOICE,
-        model_id: INWORLD_TTS_MODEL,
+        voice_id: VOICE,
+        model_id: TTS_MODEL,
         audio_config: { audio_encoding: "LINEAR16", sample_rate_hertz: TTS_SAMPLE_RATE },
       }),
       signal,
