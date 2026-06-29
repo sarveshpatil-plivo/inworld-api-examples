@@ -451,8 +451,8 @@ class InworldCascadedAgent {
       // the absolute backstop guarantees we never leave the call open if a turn
       // stalls.
       if (this.pendingHangup && !this.hungUp) {
-        if (Date.now() - this.hangupArmedAt > 5000) {
-          this.doHangup(); // backstop
+        if (Date.now() - this.hangupArmedAt > 12000) {
+          this.doHangup(); // backstop for a stalled/never-completing farewell
         } else if (!this.processing && this.outBuffer.length === 0) {
           if (++this.hangupSilenceTicks >= 30) this.doHangup();
         } else {

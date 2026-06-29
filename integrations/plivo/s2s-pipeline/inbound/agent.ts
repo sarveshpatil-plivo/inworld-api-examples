@@ -295,8 +295,8 @@ class InworldS2SAgent {
       // backstop guarantees we never leave the call open if that response stalls
       // or never completes.
       if (this.pendingHangup && !this.hungUp) {
-        if (Date.now() - this.hangupArmedAt > 5000) {
-          this.doHangup(); // backstop
+        if (Date.now() - this.hangupArmedAt > 12000) {
+          this.doHangup(); // backstop for a stalled/never-completing farewell
         } else if (this.farewellStarted && !this.isSpeaking()) {
           if (++this.hangupSilenceTicks >= 30) this.doHangup();
         } else {
@@ -322,6 +322,15 @@ class InworldS2SAgent {
     this.log("barge-in", "user interrupted — clearing playback");
     this.bargeIns += 1;
     this.responseGenerating = false;
+    // Caller re-engaged — cancel any end_call hangup the interrupted turn armed,
+    // or clearing outBuffer below would let the pump race to doHangup and drop
+    // the caller who just started talking.
+    if (this.pendingHangup && !this.hungUp) {
+      this.pendingHangup = false;
+      this.farewellStarted = false;
+      this.hangupSilenceTicks = 0;
+      this.hangupArmedAt = 0;
+    }
     this.outBuffer = Buffer.alloc(0);
     if (this.plivoWs.readyState === WebSocket.OPEN) {
       this.plivoWs.send(JSON.stringify({ event: "clearAudio", stream_id: this.streamId }));
@@ -351,6 +360,10 @@ class InworldS2SAgent {
       this.sendToInworld({ type: "response.create" });
       this.pendingHangup = true;
       this.hangupArmedAt = Date.now();
+      // The model usually says its goodbye in the SAME turn as the tool call, so
+      // the farewell is already playing now — mark it started so we hang up
+      // promptly once it drains, instead of sitting silent until the backstop.
+      if (this.isSpeaking()) this.farewellStarted = true;
       this.log("end_call", `requested (${(args.reason as string) || "no reason"})`);
     }
   }
