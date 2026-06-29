@@ -19,9 +19,10 @@ Local testing needs a public tunnel: `ngrok http 3000` → put the HTTPS URL in 
 ## Responsibilities
 
 - **`inbound/server.ts`** — telephony + Plivo provisioning ONLY (`configurePlivoWebhooks`, `/answer`, `/ws`, `/hangup`, `/fallback`). Mirrors the s2s-pipeline server (same structure; hands off to the cascaded agent).
-- **`inbound/agent.ts`** — the cascaded pipeline + state machine. Owns the STT socket, the Router/LLM stream, and the TTS calls.
+- **`inbound/agent.ts`** — the turn/state machine: STT transcripts → LLM stream → per-sentence TTS → paced playback, plus barge-in and the `end_call` hangup.
+- **`inbound/inworld.ts`** — the Inworld clients: `InworldSTT` (WebSocket), `streamLLM` (Router SSE), `synthesize` (TTS → μ-law).
 - **`inbound/system_prompt.md`** — system instructions (override via `SYSTEM_PROMPT`).
-- **`utils.ts`** — phone normalization **+ G.711 μ-law↔PCM + resample** (this pipeline transcodes; S2S doesn't).
+- **`utils.ts`** — phone normalization **+ G.711 μ-law↔PCM + resample** (used by `inworld.ts`; this pipeline transcodes, S2S doesn't).
 
 ## Pipeline flow (agent.ts)
 

@@ -21,8 +21,10 @@ Local testing needs a public tunnel: `ngrok http 3000` → put the HTTPS URL in 
 - **`inbound/server.ts`** — telephony + Plivo setup ONLY: startup provisioning
   (`configurePlivoWebhooks`: find/create the Plivo Application, map the number), and the
   `/answer`, `/ws`, `/hangup`, `/fallback`, `/` routes.
-- **`inbound/agent.ts`** — pipeline orchestration + call state machine. Owns the Inworld
-  connection, session config (model/voice/STT), and all audio handling.
+- **`inbound/agent.ts`** — call state machine: bridges Plivo audio to the Inworld client, paces
+  audio back, and handles barge-in + the `end_call` hangup.
+- **`inbound/inworld.ts`** — the Inworld Realtime client: owns the WebSocket, the session config,
+  and the event protocol; exposes a small handler/method surface to `agent.ts`.
 - **`inbound/system_prompt.md`** — system instructions (loaded by `agent.ts`; override via `SYSTEM_PROMPT`).
 - **`utils.ts`** — shared helpers (phone normalization; audio conversion lives here in pipelines that need it — S2S doesn't).
 

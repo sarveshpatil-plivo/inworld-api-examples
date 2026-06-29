@@ -13,7 +13,8 @@ the folder you're editing** — this root file is only an overview.
 ## Responsibilities (per example)
 
 - **`inbound/server.ts`** — telephony + Plivo provisioning ONLY (`/answer`, `/ws`, `/hangup`, `/fallback`; `configurePlivoWebhooks` on startup).
-- **`inbound/agent.ts`** — pipeline orchestration + call state machine; owns the Inworld connection(s) and audio.
+- **`inbound/agent.ts`** — call state machine + audio orchestration (barge-in, end_call).
+- **`inbound/inworld.ts`** — the Inworld client(s)/protocol (Realtime socket for s2s; STT/LLM/TTS for cascaded).
 - **`inbound/system_prompt.md`** — system instructions (override with `SYSTEM_PROMPT`).
 - **`utils.ts`** — shared helpers (phone normalization; audio conversion in pipelines that need it).
 
@@ -45,6 +46,7 @@ Receive: `session.created/updated`, `response.output_audio.delta/done`, `respons
 | Change | File |
 |--------|------|
 | System prompt | `inbound/system_prompt.md` |
-| Voice / LLM / STT config, state machine, barge-in, audio | `inbound/agent.ts` |
+| State machine, barge-in, end_call, audio pacing | `inbound/agent.ts` |
+| Inworld session config / models / protocol | `inbound/inworld.ts` |
 | Plivo provisioning, `/answer` `/ws` `/hangup` `/fallback`, env | `inbound/server.ts` |
 | Phone normalization (shared) | `utils.ts` |
