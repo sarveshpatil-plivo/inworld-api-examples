@@ -1,14 +1,4 @@
-/**
- * Standalone server for inbound calls (Plivo telephony + Plivo provisioning).
- *
- * Telephony only — the STT→LLM→TTS pipeline lives in agent.ts.
- *   - On startup, ensure the Plivo Application + number→app mapping exist.
- *   - POST/GET /answer  → Plivo XML opening a bidirectional μ-law media stream
- *   - WS   /ws          → hands the stream to the agent once it starts
- *   - POST /hangup      → logs call teardown
- *   - POST /fallback    → graceful failure message
- *   - GET  /            → health check
- */
+// Inbound call server — Plivo telephony + auto-provisioning. Pipeline logic lives in agent.ts.
 import { createServer } from "node:http";
 import express from "express";
 import plivo from "plivo";
@@ -18,8 +8,6 @@ import { runAgent } from "./agent.js";
 import { normalizePhoneNumber } from "../utils.js";
 
 const APP_NAME = "Inworld_STT_LLM_TTS_Voice_Agent";
-
-// Shared Plivo client — provisioning on startup + hanging up calls on request.
 const plivoClient = new plivo.Client(config.plivoAuthId, config.plivoAuthToken);
 
 async function configurePlivoWebhooks(): Promise<boolean> {
@@ -59,12 +47,11 @@ async function configurePlivoWebhooks(): Promise<boolean> {
   }
 }
 
+let provisioned = false;
+
 const app = express();
 app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
-
-// Reflects whether startup auto-provisioning mapped the number (see GET /).
-let provisioned = false;
 
 app.get("/", (_req, res) => {
   const phone = normalizePhoneNumber(config.plivoPhoneNumber);
@@ -125,26 +112,23 @@ wss.on("connection", (ws: WebSocket, req) => {
     const callId = resolvedCallId || "unknown";
     const streamId = start.start?.streamId || "";
 
+    // hangup wired only when a real CallUUID is known (so end_call can drop the live PSTN leg).
     runAgent({
       plivoWs: ws,
       callId,
       streamId,
       fromNumber: meta.from,
-      // Hang up the live call via the Plivo REST API when the agent calls
-      // end_call. Only wire it when we have a real CallUUID to act on.
       hangup: resolvedCallId
         ? () => plivoClient.calls.hangup(resolvedCallId).then(() => undefined)
         : undefined,
-    })
-      .catch((err) => {
-        console.error(`[ws] agent error:`, err);
-        try { ws.close(); } catch { /* noop */ }
-      });
+    }).catch((err) => {
+      console.error(`[ws] agent error:`, err);
+      try { ws.close(); } catch { /* noop */ }
+    });
   });
 });
 
 async function main() {
-  // Required env is validated when config.ts loads, so we can provision directly.
   console.log("[server] Configuring Plivo webhooks...");
   provisioned = await configurePlivoWebhooks();
   if (provisioned) {
