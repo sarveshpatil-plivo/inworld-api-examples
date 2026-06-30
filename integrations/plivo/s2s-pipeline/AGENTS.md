@@ -5,7 +5,7 @@ Speech-to-speech inbound voice agent over one Inworld Realtime WebSocket. See th
 
 ## MUST
 
-- Keep `server.ts` (telephony + Plivo provisioning) and `agent.ts` (pipeline + state machine) separate.
+- Keep `index.ts` (telephony + Plivo provisioning) and `agent.ts` (pipeline + state machine) separate.
 - Keep audio 8kHz μ-law (`g711_ulaw`) end to end — no transcoding.
 - Send `playAudio` as `{ media: { contentType: "audio/x-mulaw", sampleRate: 8000, payload } }` in 160-byte (20ms) chunks.
 - Gate barge-in on `isSpeaking()` (clear playback + `response.cancel` only while the agent is talking).
@@ -16,9 +16,9 @@ Speech-to-speech inbound voice agent over one Inworld Realtime WebSocket. See th
 - Commit `.env` / credentials.
 - Change the audio format/sample rate, or drop `contentType`/`sampleRate` from `playAudio`.
 - Cancel the response on every `speech_started` regardless of state (causes the agent to cut itself off).
-- Put pipeline logic in `server.ts` or telephony/provisioning logic in `agent.ts`.
+- Put pipeline logic in `index.ts` or telephony/provisioning logic in `agent.ts`.
 
-## Plivo provisioning (server.ts)
+## Plivo provisioning (index.ts)
 
 On startup `configurePlivoWebhooks()` finds/creates the Plivo Application and maps the number to
 it (answer/hangup/fallback URLs from `PUBLIC_URL`). Requires `PLIVO_AUTH_ID/TOKEN`,
@@ -36,4 +36,4 @@ it (answer/hangup/fallback URLs from `PUBLIC_URL`). Requires `PLIVO_AUTH_ID/TOKE
 - No audio / drops mid-response: confirm `playAudio` includes `contentType`+`sampleRate`.
 - Call doesn't connect: check the `/answer` webhook is reachable and `PUBLIC_URL` matches ngrok.
 - Provisioning failed: verify Plivo creds + that `PLIVO_PHONE_NUMBER` is E.164; check `[provision]` logs.
-- No AI response: verify the Inworld key has **Realtime API** scope (see `inbound/server.ts` logs for `Inworld HTTP <status>`).
+- No AI response: verify the Inworld key has **Realtime API** scope (see `inbound/index.ts` logs for `Inworld HTTP <status>`).

@@ -2,23 +2,23 @@
 
 Inbound phone voice agent. One WebSocket to the **Inworld Realtime API** handles STT + LLM +
 TTS (speech-to-speech). Audio is G.711 μ-law @ 8kHz on both the Plivo and Inworld legs, so it
-passes through with no transcoding. Layout: `inbound/{agent.ts, server.ts, system_prompt.md}`
+passes through with no transcoding. Layout: `inbound/{agent.ts, index.ts, system_prompt.md}`
 + a shared `utils.ts`.
 
 ## Commands
 
 ```bash
 npm install
-npm run dev        # tsx watch inbound/server.ts (SERVER_PORT, default 3000)
+npm run dev        # tsx watch inbound/index.ts (SERVER_PORT, default 3000)
 npm run build      # tsc -> dist/
-npm start          # node dist/inbound/server.js
+npm start          # node dist/inbound/index.js
 ```
 
 Local testing needs a public tunnel: `ngrok http 3000` → put the HTTPS URL in `PUBLIC_URL`.
 
 ## Responsibilities (do not mix these)
 
-- **`inbound/server.ts`** — telephony + Plivo setup ONLY: startup provisioning
+- **`inbound/index.ts`** — telephony + Plivo setup ONLY: startup provisioning
   (`configurePlivoWebhooks`: find/create the Plivo Application, map the number), and the
   `/answer`, `/ws`, `/hangup`, `/fallback`, `/` routes.
 - **`inbound/agent.ts`** — call state machine: bridges Plivo audio to the Inworld client, paces

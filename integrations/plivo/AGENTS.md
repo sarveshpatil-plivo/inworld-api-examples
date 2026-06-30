@@ -9,7 +9,7 @@ the folder you're editing.
 
 ## MUST
 
-- Keep the split: `inbound/server.ts` = telephony + Plivo provisioning; `inbound/agent.ts` = pipeline + state machine; `inbound/system_prompt.md` = instructions; `utils.ts` = shared helpers.
+- Keep the split: `inbound/index.ts` = telephony + Plivo provisioning; `inbound/agent.ts` = pipeline + state machine; `inbound/system_prompt.md` = instructions; `utils.ts` = shared helpers.
 - Keep Plivo audio at 8kHz μ-law. Send `playAudio` as `{ media: { contentType:"audio/x-mulaw", sampleRate:8000, payload } }` in 160-byte (20ms) chunks.
 - Gate barge-in on `isSpeaking()` (clear playback + cancel only while the agent is talking).
 - `npm run build` (tsc) must pass before claiming a change works; test over `ngrok http 3000` against a real call.
@@ -18,10 +18,10 @@ the folder you're editing.
 
 - Commit `.env` or credentials.
 - Drop `contentType`/`sampleRate` from `playAudio`, or change the 8kHz rate.
-- Mix telephony/provisioning into `agent.ts` or pipeline logic into `server.ts`.
+- Mix telephony/provisioning into `agent.ts` or pipeline logic into `index.ts`.
 - Interrupt the agent on every `speech_started` regardless of state (it cuts itself off).
 
-## Plivo provisioning (both server.ts)
+## Plivo provisioning (both index.ts)
 
 On startup `configurePlivoWebhooks()` finds/creates the Plivo Application and maps
 `PLIVO_PHONE_NUMBER` to it (answer/hangup/fallback from `PUBLIC_URL`). Non-fatal if creds missing.

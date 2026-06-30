@@ -20,13 +20,15 @@ export const config = {
   plivoAuthToken: required("PLIVO_AUTH_TOKEN"),
   plivoPhoneNumber: required("PLIVO_PHONE_NUMBER"),
 
-  // Optional — override the pipeline defaults
+  // Cascaded pipeline defaults (change here if you need different models/rate)
+  llmModel: "google-ai-studio/gemini-2.5-flash",
+  sttModel: "inworld/inworld-stt-1",
+  ttsModel: "inworld-tts-2",
+  ttsSampleRate: 8000,
+
+  // Optional — override via env
   port: parseInt(optional("SERVER_PORT", "3000"), 10),
-  llmModel: optional("LLM_MODEL", "google-ai-studio/gemini-2.5-flash"),
-  sttModel: optional("STT_MODEL", "inworld/inworld-stt-1"),
-  ttsModel: optional("TTS_MODEL", "inworld-tts-2"),
   voice: optional("VOICE", "Sarah"),
-  ttsSampleRate: parseInt(optional("TTS_SAMPLE_RATE", "8000"), 10),
   systemPrompt:
     process.env.SYSTEM_PROMPT?.trim() ||
     readFileSync(new URL("./system_prompt.md", import.meta.url), "utf-8").trim(),

@@ -5,7 +5,7 @@ pipeline flow, API contracts, and file map.
 
 ## MUST
 
-- Keep `server.ts` (telephony + Plivo provisioning) and `agent.ts` (pipeline + state machine) separate.
+- Keep `index.ts` (telephony + Plivo provisioning) and `agent.ts` (pipeline + state machine) separate.
 - Convert audio at the boundaries: Plivo μ-law → `ulawToPcm` (LINEAR16) for STT; TTS PCM → `pcmToUlaw` (+ resample) for Plivo.
 - Send `playAudio` as `{ media: { contentType:"audio/x-mulaw", sampleRate:8000, payload } }` in 160-byte (20ms) chunks.
 - Stream the LLM and synthesize TTS **per sentence** — don't block on the full response.
@@ -18,7 +18,7 @@ pipeline flow, API contracts, and file map.
 - Commit `.env` / credentials.
 - Drop `contentType`/`sampleRate` from `playAudio`, or change the 8kHz Plivo rate.
 - Replace per-sentence TTS with a single blocking call at end of turn (kills perceived latency).
-- Put pipeline logic in `server.ts` or telephony logic in `agent.ts`.
+- Put pipeline logic in `index.ts` or telephony logic in `agent.ts`.
 
 ## API contracts (corrected — see CLAUDE.md)
 

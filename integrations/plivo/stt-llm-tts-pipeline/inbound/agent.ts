@@ -3,7 +3,7 @@
  *
  * Caller audio (Plivo μ-law) → STT; on each final transcript, stream the LLM,
  * synthesize TTS per sentence, and pace it back to Plivo. The Inworld clients
- * live in inworld.ts; telephony in server.ts; this is the turn/state machine
+ * live in inworld.ts; telephony in index.ts; this is the turn/state machine
  * (barge-in, end_call, history).
  */
 import WebSocket from "ws";

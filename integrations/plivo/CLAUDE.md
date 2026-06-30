@@ -2,7 +2,7 @@
 
 Self-contained inbound voice-agent examples connecting Plivo phone calls to Inworld. Structure
 follows a conventional layout: each example has
-`inbound/{agent.ts, server.ts, system_prompt.md}` + a shared `utils.ts`.
+`inbound/{agent.ts, index.ts, system_prompt.md}` + a shared `utils.ts`.
 
 - **`s2s-pipeline/`** — single WebSocket to the Inworld Realtime API (speech-to-speech: STT + LLM + TTS in one). **Done.**
 - **`stt-llm-tts-pipeline/`** — separate Inworld STT → Router/LLM → TTS services chained (more flexibility, higher latency).
@@ -12,7 +12,7 @@ the folder you're editing** — this root file is only an overview.
 
 ## Responsibilities (per example)
 
-- **`inbound/server.ts`** — telephony + Plivo provisioning ONLY (`/answer`, `/ws`, `/hangup`, `/fallback`; `configurePlivoWebhooks` on startup).
+- **`inbound/index.ts`** — telephony + Plivo provisioning ONLY (`/answer`, `/ws`, `/hangup`, `/fallback`; `configurePlivoWebhooks` on startup).
 - **`inbound/agent.ts`** — call state machine + audio orchestration (barge-in, end_call).
 - **`inbound/inworld.ts`** — the Inworld client(s)/protocol (Realtime socket for s2s; STT/LLM/TTS for cascaded).
 - **`inbound/config.ts`** — single source of config; validates required env at startup (fail fast).
@@ -31,7 +31,7 @@ cd s2s-pipeline && npm install && npm run dev
 - NEVER change the audio sample rate from 8kHz μ-law — Plivo requires it.
 - `playAudio` MUST include `contentType: "audio/x-mulaw"` + `sampleRate: 8000`; send 160-byte (20ms) chunks.
 - Barge-in: gate on `isSpeaking()` — clear Plivo playback + cancel Inworld only while the agent is talking.
-- Keep telephony/provisioning in `server.ts` and pipeline/state-machine in `agent.ts`.
+- Keep telephony/provisioning in `index.ts` and pipeline/state-machine in `agent.ts`.
 
 ## Plivo WebSocket (`/ws`)
 
@@ -50,5 +50,5 @@ Receive: `session.created/updated`, `response.output_audio.delta/done`, `respons
 | State machine, barge-in, end_call, audio pacing | `inbound/agent.ts` |
 | Inworld models / session config / protocol | `inbound/inworld.ts` |
 | Env vars + validation (required fail fast) | `inbound/config.ts` |
-| Plivo provisioning, `/answer` `/ws` `/hangup` `/fallback` | `inbound/server.ts` |
+| Plivo provisioning, `/answer` `/ws` `/hangup` `/fallback` | `inbound/index.ts` |
 | Phone normalization (shared) | `utils.ts` |

@@ -3,10 +3,11 @@
   "version": "0.1.0",
   "description": "Plivo inbound voice agent using an Inworld cascaded STT + Router/LLM + TTS pipeline",
   "type": "module",
+  "main": "dist/inbound/index.js",
   "scripts": {
-    "dev": "tsx watch inbound/server.ts",
+    "dev": "tsx watch inbound/index.ts",
     "build": "tsc",
-    "start": "node dist/inbound/server.js"
+    "start": "node dist/inbound/index.js"
   },
   "dependencies": {
     "dotenv": "^16.4.7",

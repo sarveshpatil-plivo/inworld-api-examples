@@ -3,22 +3,22 @@
 Inbound phone voice agent. Three separate Inworld services chained: **STT** (WebSocket) →
 **Router/LLM** (streaming HTTP) → **TTS** (HTTP) → Plivo. Each stage is independently swappable
 and observable (vs. the single-socket `s2s-pipeline/`). Layout:
-`inbound/{agent.ts, server.ts, system_prompt.md}` + a shared `utils.ts`.
+`inbound/{agent.ts, index.ts, system_prompt.md}` + a shared `utils.ts`.
 
 ## Commands
 
 ```bash
 npm install
-npm run dev        # tsx watch inbound/server.ts (SERVER_PORT, default 3000)
+npm run dev        # tsx watch inbound/index.ts (SERVER_PORT, default 3000)
 npm run build      # tsc -> dist/
-npm start          # node dist/inbound/server.js
+npm start          # node dist/inbound/index.js
 ```
 
 Local testing needs a public tunnel: `ngrok http 3000` → put the HTTPS URL in `PUBLIC_URL`.
 
 ## Responsibilities
 
-- **`inbound/server.ts`** — telephony + Plivo provisioning ONLY (`configurePlivoWebhooks`, `/answer`, `/ws`, `/hangup`, `/fallback`). Mirrors the s2s-pipeline server (same structure; hands off to the cascaded agent).
+- **`inbound/index.ts`** — telephony + Plivo provisioning ONLY (`configurePlivoWebhooks`, `/answer`, `/ws`, `/hangup`, `/fallback`). Mirrors the s2s-pipeline server (same structure; hands off to the cascaded agent).
 - **`inbound/agent.ts`** — the turn/state machine: STT transcripts → LLM stream → per-sentence TTS → paced playback, plus barge-in and the `end_call` hangup.
 - **`inbound/inworld.ts`** — the Inworld clients: `InworldSTT` (WebSocket), `streamLLM` (Router SSE), `synthesize` (TTS → μ-law).
 - **`inbound/config.ts`** — single source of config; validates required env at startup (fail fast).
@@ -54,7 +54,7 @@ Local testing needs a public tunnel: `ngrok http 3000` → put the HTTPS URL in 
 - `playAudio` MUST include `contentType:"audio/x-mulaw"` + `sampleRate:8000`; send 160-byte (20ms) chunks.
 - Synthesize TTS **per sentence** as the LLM streams — don't wait for the full response.
 - Barge-in (gated on `isSpeaking()`): `activeAbort.abort()` + `clearAudio`.
-- Keep telephony/provisioning in `server.ts`, pipeline in `agent.ts`.
+- Keep telephony/provisioning in `index.ts`, pipeline in `agent.ts`.
 
 ## Env vars
 
