@@ -49,9 +49,6 @@ class InworldS2SAgent implements RealtimeHandlers {
   private hangupArmedAt = 0;
   private hungUp = false;
 
-  private turns = 0;
-  private bargeIns = 0;
-
   constructor(private readonly opts: AgentOptions) {
     let instructions = opts.systemPrompt || config.systemPrompt;
     if (opts.fromNumber) instructions += `\n\n## Call Context\n- Caller: ${opts.fromNumber}\n- Call ID: ${opts.callId}`;
@@ -84,7 +81,7 @@ class InworldS2SAgent implements RealtimeHandlers {
     if (this.pendingHangup) this.farewellStarted = true; // the goodbye is now playing
     if (audioB64) this.outBuffer = Buffer.concat([this.outBuffer, Buffer.from(audioB64, "base64")]);
   }
-  onResponseDone(): void { this.responseGenerating = false; this.turns += 1; }
+  onResponseDone(): void { this.responseGenerating = false; }
   onUserTranscript(text: string): void { this.log("user", text); }
   onSpeechStarted(): void { if (this.isSpeaking()) this.bargeIn(); }
   onToolCall(callId: string, name: string, argsJson: string): void {
@@ -143,7 +140,6 @@ class InworldS2SAgent implements RealtimeHandlers {
 
   private bargeIn(): void {
     this.log("barge-in", "user interrupted");
-    this.bargeIns += 1;
     this.responseGenerating = false;
     // Caller re-engaged — cancel any armed end_call hangup so we don't drop them.
     if (this.pendingHangup && !this.hungUp) {
@@ -172,7 +168,7 @@ class InworldS2SAgent implements RealtimeHandlers {
     if (!this.running) return;
     this.running = false;
     if (this.txTimer) { clearInterval(this.txTimer); this.txTimer = null; }
-    this.log("session", `ended: ${this.turns} turns, ${this.bargeIns} barge-ins`);
+    this.log("session", "ended");
     this.inworld.close();
     try { if (this.opts.plivoWs.readyState === WebSocket.OPEN) this.opts.plivoWs.close(); } catch { /* noop */ }
     this.resolveRun?.();

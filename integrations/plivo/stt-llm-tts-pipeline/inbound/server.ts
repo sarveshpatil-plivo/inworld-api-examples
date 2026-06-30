@@ -38,13 +38,11 @@ async function configurePlivoWebhooks(): Promise<boolean> {
       await client.applications.update(appId, {
         answerUrl, answerMethod: "POST", hangupUrl, hangupMethod: "POST", fallbackAnswerUrl: fallbackUrl,
       } as any);
-      console.log(`[provision] Updated Plivo application: ${APP_NAME}`);
     } else {
       const created: any = await client.applications.create(APP_NAME, {
         answerUrl, answerMethod: "POST", hangupUrl, hangupMethod: "POST", fallbackAnswerUrl: fallbackUrl,
       } as any);
       appId = created.appId ?? created.app_id;
-      console.log(`[provision] Created Plivo application: ${APP_NAME}`);
     }
 
     const number = normalizePhoneNumber(config.plivoPhoneNumber);
@@ -53,8 +51,7 @@ async function configurePlivoWebhooks(): Promise<boolean> {
       return false;
     }
     await client.numbers.update(number, { appId });
-    console.log(`[provision] Mapped +${number} → ${APP_NAME}`);
-    console.log(`[provision]   Answer URL: ${answerUrl}`);
+    console.log(`[provision] Mapped +${number} → ${APP_NAME} (${answerUrl})`);
     return true;
   } catch (err) {
     console.error(`[provision] Failed to configure Plivo: ${(err as Error).message}`);
@@ -127,7 +124,6 @@ wss.on("connection", (ws: WebSocket, req) => {
     const resolvedCallId = start.start?.callId || meta.call_uuid;
     const callId = resolvedCallId || "unknown";
     const streamId = start.start?.streamId || "";
-    console.log(`[ws] Plivo stream started: callId=${callId}, streamId=${streamId}`);
 
     runAgent({
       plivoWs: ws,
@@ -159,7 +155,6 @@ async function main() {
 
   server.listen(config.port, () => {
     console.log(`[server] Listening on port ${config.port}`);
-    console.log(`[server] Answer webhook: ${config.publicUrl}/answer`);
   });
 }
 
