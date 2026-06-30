@@ -6,17 +6,9 @@
  * legs, so it passes through untouched. Telephony lives in server.ts; the Inworld
  * protocol lives in inworld.ts; this file is the call state machine.
  */
-import { readFileSync } from "node:fs";
 import WebSocket from "ws";
+import { config } from "./config.js";
 import { InworldRealtime, type RealtimeHandlers } from "./inworld.js";
-
-const INWORLD_API_KEY = process.env.INWORLD_API_KEY || "";
-// Pipeline config — overridable via env (see .env.example).
-const LLM_MODEL = process.env.LLM_MODEL || "google-ai-studio/gemini-2.5-flash";
-const STT_MODEL = process.env.STT_MODEL || "inworld/inworld-stt-1";
-const TTS_MODEL = process.env.TTS_MODEL || "inworld-tts-2";
-const VOICE = process.env.VOICE || "Sarah";
-const VAD_EAGERNESS = process.env.VAD_EAGERNESS || "high";
 
 const PLIVO_CHUNK_SIZE = 160; // 20 ms of μ-law @ 8 kHz
 
@@ -31,10 +23,6 @@ const END_CALL_TOOL = {
     required: ["reason"],
   },
 };
-
-const SYSTEM_PROMPT =
-  process.env.SYSTEM_PROMPT ||
-  readFileSync(new URL("./system_prompt.md", import.meta.url), "utf-8").trim();
 
 interface AgentOptions {
   plivoWs: WebSocket;
@@ -65,12 +53,12 @@ class InworldS2SAgent implements RealtimeHandlers {
   private bargeIns = 0;
 
   constructor(private readonly opts: AgentOptions) {
-    let instructions = opts.systemPrompt || SYSTEM_PROMPT;
+    let instructions = opts.systemPrompt || config.systemPrompt;
     if (opts.fromNumber) instructions += `\n\n## Call Context\n- Caller: ${opts.fromNumber}\n- Call ID: ${opts.callId}`;
     this.inworld = new InworldRealtime(
-      { apiKey: INWORLD_API_KEY, sessionId: `voice-${opts.callId}`, instructions,
-        llmModel: LLM_MODEL, sttModel: STT_MODEL, ttsModel: TTS_MODEL, voice: VOICE,
-        vadEagerness: VAD_EAGERNESS, tools: [END_CALL_TOOL] },
+      { apiKey: config.inworldApiKey, sessionId: `voice-${opts.callId}`, instructions,
+        llmModel: config.llmModel, sttModel: config.sttModel, ttsModel: config.ttsModel,
+        voice: config.voice, vadEagerness: config.vadEagerness, tools: [END_CALL_TOOL] },
       this,
     );
   }

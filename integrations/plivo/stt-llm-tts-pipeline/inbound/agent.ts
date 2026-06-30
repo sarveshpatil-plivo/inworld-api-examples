@@ -6,8 +6,8 @@
  * Plivo. The Inworld clients live in inworld.ts; telephony in server.ts; this
  * file is the turn/state machine (barge-in, end_call, history).
  */
-import { readFileSync } from "node:fs";
 import WebSocket from "ws";
+import { config } from "./config.js";
 import { InworldSTT, streamLLM, synthesize, type InworldConfig, type Message, type SttHandlers } from "./inworld.js";
 
 const PLIVO_RATE = 8000;
@@ -16,12 +16,12 @@ const END_OF_UTTERANCE_MS = 800;                 // silence after a final transc
 const GREETING = "Hello! How can I help you today?";
 
 const CFG: InworldConfig = {
-  apiKey: process.env.INWORLD_API_KEY || "",
-  llmModel: process.env.LLM_MODEL || "google-ai-studio/gemini-2.5-flash",
-  sttModel: process.env.STT_MODEL || "inworld/inworld-stt-1",
-  ttsModel: process.env.TTS_MODEL || "inworld-tts-2",
-  voice: process.env.VOICE || "Sarah",
-  ttsSampleRate: parseInt(process.env.TTS_SAMPLE_RATE || "8000", 10),
+  apiKey: config.inworldApiKey,
+  llmModel: config.llmModel,
+  sttModel: config.sttModel,
+  ttsModel: config.ttsModel,
+  voice: config.voice,
+  ttsSampleRate: config.ttsSampleRate,
   plivoRate: PLIVO_RATE,
   language: "en-US",
 };
@@ -35,10 +35,6 @@ const END_CALL_TOOL = {
     parameters: { type: "object", properties: { reason: { type: "string" } }, required: ["reason"] },
   },
 };
-
-const SYSTEM_PROMPT =
-  process.env.SYSTEM_PROMPT ||
-  readFileSync(new URL("./system_prompt.md", import.meta.url), "utf-8").trim();
 
 const SENTENCE_SEGMENTER = new Intl.Segmenter("en", { granularity: "sentence" });
 const LIST_MARKER = /^\s*(?:\d+[.)]|[-*•])\s*$/; // a bare "1." / "-" Intl.Segmenter splits off on its own
@@ -92,7 +88,7 @@ class InworldCascadedAgent implements SttHandlers {
   private hungUp = false;
 
   constructor(private readonly opts: AgentOptions) {
-    let prompt = opts.systemPrompt || SYSTEM_PROMPT;
+    let prompt = opts.systemPrompt || config.systemPrompt;
     if (opts.fromNumber) prompt += `\n\n## Call Context\n- Caller: ${opts.fromNumber}\n- Call ID: ${opts.callId}`;
     this.history = [{ role: "system", content: prompt }];
     this.stt = new InworldSTT(CFG, this);

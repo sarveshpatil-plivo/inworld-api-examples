@@ -10,43 +10,26 @@
  *   - POST /fallback    → graceful failure message if /answer errors
  *   - GET  /            → health check
  */
-import "dotenv/config";
 import { createServer } from "node:http";
 import express from "express";
 import plivo from "plivo";
 import { WebSocketServer, WebSocket } from "ws";
+import { config } from "./config.js";
 import { runAgent } from "./agent.js";
 import { normalizePhoneNumber } from "../utils.js";
 
-const SERVER_PORT = parseInt(process.env.SERVER_PORT || "3000", 10);
-const PLIVO_AUTH_ID = process.env.PLIVO_AUTH_ID || "";
-const PLIVO_AUTH_TOKEN = process.env.PLIVO_AUTH_TOKEN || "";
-const PLIVO_PHONE_NUMBER = process.env.PLIVO_PHONE_NUMBER || "";
-const PUBLIC_URL = process.env.PUBLIC_URL || "";
 const APP_NAME = "Inworld_S2S_Voice_Agent";
 
-// Shared Plivo client (provisioning + hanging up calls when the agent asks).
-const plivoClient =
-  PLIVO_AUTH_ID && PLIVO_AUTH_TOKEN ? new plivo.Client(PLIVO_AUTH_ID, PLIVO_AUTH_TOKEN) : null;
+// Shared Plivo client — provisioning on startup + hanging up calls on request.
+const plivoClient = new plivo.Client(config.plivoAuthId, config.plivoAuthToken);
 
 // ── Plivo provisioning ──────────────────────────────────────────────────────
 async function configurePlivoWebhooks(): Promise<boolean> {
-  const missing = [
-    ["PLIVO_AUTH_ID", PLIVO_AUTH_ID],
-    ["PLIVO_AUTH_TOKEN", PLIVO_AUTH_TOKEN],
-    ["PLIVO_PHONE_NUMBER", PLIVO_PHONE_NUMBER],
-    ["PUBLIC_URL", PUBLIC_URL],
-  ].filter(([, v]) => !v).map(([k]) => k);
-  if (missing.length) {
-    console.warn(`[provision] Skipping Plivo auto-config. Missing: ${missing.join(", ")}`);
-    return false;
-  }
-
   try {
-    const client = plivoClient!;
-    const answerUrl = `${PUBLIC_URL}/answer`;
-    const hangupUrl = `${PUBLIC_URL}/hangup`;
-    const fallbackUrl = `${PUBLIC_URL}/fallback`;
+    const client = plivoClient;
+    const answerUrl = `${config.publicUrl}/answer`;
+    const hangupUrl = `${config.publicUrl}/hangup`;
+    const fallbackUrl = `${config.publicUrl}/fallback`;
 
     // Find or create the application.
     const apps: any = await client.applications.list();
@@ -68,9 +51,9 @@ async function configurePlivoWebhooks(): Promise<boolean> {
     }
 
     // Map the phone number to the application.
-    const number = normalizePhoneNumber(PLIVO_PHONE_NUMBER);
+    const number = normalizePhoneNumber(config.plivoPhoneNumber);
     if (!number) {
-      console.error(`[provision] Invalid phone number: ${PLIVO_PHONE_NUMBER}`);
+      console.error(`[provision] Invalid phone number: ${config.plivoPhoneNumber}`);
       return false;
     }
     await client.numbers.update(number, { appId });
@@ -92,7 +75,7 @@ app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
 
 app.get("/", (_req, res) => {
-  const phone = normalizePhoneNumber(PLIVO_PHONE_NUMBER);
+  const phone = normalizePhoneNumber(config.plivoPhoneNumber);
   res.status(provisioned ? 200 : 503).json({
     status: provisioned ? "ok" : "setup-incomplete",
     service: "inworld-s2s-inbound",
@@ -107,7 +90,7 @@ function answerHandler(req: express.Request, res: express.Response) {
   console.log(`[answer] Incoming call: CallUUID=${callId}, From=${from}, To=${to}`);
 
   const body = Buffer.from(JSON.stringify({ call_uuid: callId, from, to })).toString("base64");
-  const wsUrl = `${PUBLIC_URL.replace(/^http/, "ws").replace(/\/$/, "")}/ws?body=${body}`;
+  const wsUrl = `${config.publicUrl.replace(/^http/, "ws")}/ws?body=${body}`;
 
   const response: any = new (plivo as any).Response();
   response.addStream(wsUrl, {
@@ -163,7 +146,7 @@ wss.on("connection", (ws: WebSocket, req) => {
       fromNumber: meta.from,
       // Hang up the live call via the Plivo REST API when the agent calls
       // end_call. Only wire it when we have a real CallUUID to act on.
-      hangup: plivoClient && resolvedCallId
+      hangup: resolvedCallId
         ? () => plivoClient.calls.hangup(resolvedCallId).then(() => undefined)
         : undefined,
     })
@@ -176,28 +159,18 @@ wss.on("connection", (ws: WebSocket, req) => {
 
 // ── Main ────────────────────────────────────────────────────────────────────
 async function main() {
-  // Fail fast on the most common setup mistake rather than booting "healthy"
-  // and failing every call later with a swallowed 401.
-  if (!process.env.INWORLD_API_KEY) {
-    console.error("[server] INWORLD_API_KEY is not set — the agent cannot authenticate to Inworld. Set it in .env.");
-    process.exit(1);
-  }
-
-  if (PLIVO_PHONE_NUMBER && PUBLIC_URL) {
-    console.log("[server] Configuring Plivo webhooks...");
-    provisioned = await configurePlivoWebhooks();
-    if (provisioned) {
-      console.log(`[server] Ready! Call +${normalizePhoneNumber(PLIVO_PHONE_NUMBER)} to test`);
-    } else {
-      console.warn("[server] ⚠ SETUP INCOMPLETE — Plivo auto-config failed; inbound calls will not route until the number is mapped. Configure it manually or fix the error above.");
-    }
+  // Required env is validated when config.ts loads, so we can provision directly.
+  console.log("[server] Configuring Plivo webhooks...");
+  provisioned = await configurePlivoWebhooks();
+  if (provisioned) {
+    console.log(`[server] Ready! Call +${normalizePhoneNumber(config.plivoPhoneNumber)} to test`);
   } else {
-    console.log("[server] Set PUBLIC_URL + PLIVO_PHONE_NUMBER to enable Plivo auto-config.");
+    console.warn("[server] ⚠ SETUP INCOMPLETE — Plivo auto-config failed; inbound calls will not route until the number is mapped. Fix the error above.");
   }
 
-  server.listen(SERVER_PORT, () => {
-    console.log(`[server] Listening on port ${SERVER_PORT}`);
-    console.log(`[server] Answer webhook: ${PUBLIC_URL || `http://localhost:${SERVER_PORT}`}/answer`);
+  server.listen(config.port, () => {
+    console.log(`[server] Listening on port ${config.port}`);
+    console.log(`[server] Answer webhook: ${config.publicUrl}/answer`);
   });
 }
 

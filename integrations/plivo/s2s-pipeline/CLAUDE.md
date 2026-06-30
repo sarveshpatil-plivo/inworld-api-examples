@@ -25,6 +25,7 @@ Local testing needs a public tunnel: `ngrok http 3000` → put the HTTPS URL in 
   audio back, and handles barge-in + the `end_call` hangup.
 - **`inbound/inworld.ts`** — the Inworld Realtime client: owns the WebSocket, the session config,
   and the event protocol; exposes a small handler/method surface to `agent.ts`.
+- **`inbound/config.ts`** — single source of config; validates required env at startup (fail fast).
 - **`inbound/system_prompt.md`** — system instructions (loaded by `agent.ts`; override via `SYSTEM_PROMPT`).
 - **`utils.ts`** — shared helpers (phone normalization; audio conversion lives here in pipelines that need it — S2S doesn't).
 
