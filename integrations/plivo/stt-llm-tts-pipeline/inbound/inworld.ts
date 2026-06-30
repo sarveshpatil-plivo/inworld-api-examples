@@ -1,8 +1,4 @@
-/**
- * Inworld cascaded clients: STT (streaming WebSocket, EventEmitter), Router/LLM
- * (OpenAI-compatible SSE), and TTS (JSON audioContent). Audio crossing these is
- * LINEAR16 PCM; the agent converts to/from Plivo's μ-law via utils.
- */
+// Inworld cascaded clients — STT (WebSocket), Router/LLM (OpenAI-compatible SSE), TTS (JSON). PCM16 internally.
 import WebSocket from "ws";
 import { EventEmitter } from "node:events";
 import { ulawToPcm, pcmToUlaw, resamplePcm16 } from "../utils.js";
@@ -27,7 +23,7 @@ export type LlmChunk = { type: "text"; text: string } | { type: "tool_call"; id:
 
 const auth = (cfg: InworldConfig) => `Basic ${cfg.apiKey}`;
 
-// ── STT: streaming WebSocket ───────────────────────────────────────────────
+// STT — streaming WebSocket
 interface SttEvents {
   ready: () => void;
   transcript: (text: string, isFinal: boolean) => void;
@@ -79,7 +75,7 @@ export class InworldSTT extends EventEmitter {
   private send(msg: object): void { if (this.ws?.readyState === WebSocket.OPEN) this.ws.send(JSON.stringify(msg)); }
 }
 
-// ── LLM: streaming chat completions (yields text + accumulated tool calls) ──
+// LLM — streaming chat completions (yields text + accumulated tool calls)
 export async function* streamLLM(cfg: InworldConfig, messages: Message[], tools: object[], signal: AbortSignal): AsyncGenerator<LlmChunk> {
   const res = await fetch(LLM_URL, {
     method: "POST",
@@ -122,7 +118,7 @@ export async function* streamLLM(cfg: InworldConfig, messages: Message[], tools:
   yield* flush();
 }
 
-// ── TTS: synthesize text → μ-law 8 kHz for Plivo ───────────────────────────
+// TTS — synthesize text → μ-law 8 kHz for Plivo
 export async function synthesize(cfg: InworldConfig, text: string, signal?: AbortSignal): Promise<Buffer> {
   const res = await fetch(TTS_URL, {
     method: "POST",

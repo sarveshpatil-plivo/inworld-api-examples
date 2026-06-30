@@ -1,8 +1,4 @@
-/**
- * Inworld Realtime (speech-to-speech) client: owns the WebSocket and the event
- * protocol. One socket does STT + LLM + TTS; audio is G.711 μ-law @ 8 kHz both ways.
- * Emits events the agent listens to; reads model/voice/etc. from config.
- */
+// Inworld Realtime (speech-to-speech) client — one WebSocket does STT + LLM + TTS (μ-law 8 kHz).
 import WebSocket from "ws";
 import { EventEmitter } from "node:events";
 import { config } from "./config.js";
@@ -10,9 +6,9 @@ import { config } from "./config.js";
 const REALTIME_URL = "wss://api.inworld.ai/api/v1/realtime/session";
 
 interface RealtimeEvents {
-  ready: () => void;                                   // session configured
-  audio: (audioB64: string) => void;                  // a chunk of agent speech
-  responseDone: () => void;                            // a response finished generating
+  ready: () => void;
+  audio: (audioB64: string) => void;
+  responseDone: () => void;
   userTranscript: (text: string) => void;
   speechStarted: () => void;                           // caller began speaking (barge-in cue)
   toolCall: (callId: string, name: string, args: string) => void;

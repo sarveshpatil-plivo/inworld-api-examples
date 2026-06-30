@@ -1,11 +1,4 @@
-/**
- * Inbound voice agent — Inworld cascaded STT → Router/LLM → TTS.
- *
- * Caller audio (Plivo μ-law) → STT; on each final transcript, stream the LLM,
- * synthesize TTS per sentence, and pace it back to Plivo. The Inworld clients
- * live in inworld.ts; telephony in index.ts; this is the turn/state machine
- * (barge-in, end_call, history).
- */
+// Inbound voice agent (Inworld cascaded STT→LLM→TTS) — turn/state machine: barge-in, end_call, history.
 import WebSocket from "ws";
 import { config } from "./config.js";
 import { InworldSTT, streamLLM, synthesize, type InworldConfig, type Message } from "./inworld.js";
@@ -67,7 +60,6 @@ export interface AgentOptions {
   hangup?: () => Promise<void> | void;
 }
 
-/** Run one call; resolves when it ends (STT/Plivo socket closes or the agent hangs up). */
 export function runAgent(opts: AgentOptions): Promise<void> {
   const { plivoWs, callId, streamId, hangup } = opts;
   const log = (stage: string, msg: string) => console.log(`[${callId}] [${stage}] ${msg}`);

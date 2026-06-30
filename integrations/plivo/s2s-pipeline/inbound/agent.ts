@@ -1,11 +1,4 @@
-/**
- * Inbound voice agent — Inworld Realtime (speech-to-speech).
- *
- * Bridges caller audio (Plivo) to the Inworld Realtime client and paces the
- * agent's audio back. Audio is G.711 μ-law @ 8 kHz on both legs, so it passes
- * through untouched. Telephony lives in index.ts; the Inworld protocol in
- * inworld.ts; this is the call state machine (barge-in + end_call).
- */
+// Inbound voice agent (Inworld Realtime) — call state machine: barge-in + end_call.
 import WebSocket from "ws";
 import { config } from "./config.js";
 import { InworldRealtime } from "./inworld.js";
@@ -30,11 +23,9 @@ export interface AgentOptions {
   streamId: string;
   fromNumber?: string;
   systemPrompt?: string;
-  /** Hang up the live call (telephony lives in index.ts; the agent just asks). */
   hangup?: () => Promise<void> | void;
 }
 
-/** Run one call; resolves when it ends (either socket closes or the agent hangs up). */
 export function runAgent(opts: AgentOptions): Promise<void> {
   const { plivoWs, callId, streamId, hangup } = opts;
   const log = (stage: string, msg: string) => console.log(`[${callId}] [${stage}] ${msg}`);
@@ -86,7 +77,6 @@ export function runAgent(opts: AgentOptions): Promise<void> {
     });
   }
 
-  /** Single teardown path: stops the pump, closes both sockets, resolves run(). */
   let resolveRun: (() => void) | null = null;
   function finish(): void {
     if (!running) return;
