@@ -1,9 +1,10 @@
 /**
- * Inworld cascaded clients: STT (streaming WebSocket), Router/LLM (OpenAI-compatible
- * SSE), and TTS (JSON audioContent). Audio crossing these is LINEAR16 PCM; the
- * agent converts to/from Plivo's μ-law via utils.
+ * Inworld cascaded clients: STT (streaming WebSocket, EventEmitter), Router/LLM
+ * (OpenAI-compatible SSE), and TTS (JSON audioContent). Audio crossing these is
+ * LINEAR16 PCM; the agent converts to/from Plivo's μ-law via utils.
  */
 import WebSocket from "ws";
+import { EventEmitter } from "node:events";
 import { ulawToPcm, pcmToUlaw, resamplePcm16 } from "../utils.js";
 
 const STT_URL = "wss://api.inworld.ai/stt/v1/transcribe:streamBidirectional";
@@ -27,27 +28,35 @@ export type LlmChunk = { type: "text"; text: string } | { type: "tool_call"; id:
 const auth = (cfg: InworldConfig) => `Basic ${cfg.apiKey}`;
 
 // ── STT: streaming WebSocket ───────────────────────────────────────────────
-export interface SttHandlers { onTranscript(text: string, isFinal: boolean): void; onClose(): void }
+interface SttEvents {
+  ready: () => void;
+  transcript: (text: string, isFinal: boolean) => void;
+  closed: () => void;
+}
+export declare interface InworldSTT {
+  on<K extends keyof SttEvents>(event: K, listener: SttEvents[K]): this;
+  emit<K extends keyof SttEvents>(event: K, ...args: Parameters<SttEvents[K]>): boolean;
+}
 
-export class InworldSTT {
+export class InworldSTT extends EventEmitter {
   private ws: WebSocket | null = null;
-  constructor(private readonly cfg: InworldConfig, private readonly h: SttHandlers) {}
+  constructor(private readonly cfg: InworldConfig) { super(); }
 
-  connect(onReady: () => void): void {
+  connect(): void {
     const ws = new WebSocket(STT_URL, { headers: { Authorization: auth(this.cfg) } });
     this.ws = ws;
     ws.on("open", () => {
       this.send({ transcribeConfig: { modelId: this.cfg.sttModel, audioEncoding: "LINEAR16", sampleRateHertz: this.cfg.plivoRate, numberOfChannels: 1, language: this.cfg.language } });
-      onReady();
+      this.emit("ready");
     });
     ws.on("message", (d: Buffer) => this.onMessage(d));
-    ws.on("error", (e) => { console.error(`[stt] socket error: ${(e as Error).message}`); this.h.onClose(); });
-    ws.on("close", () => this.h.onClose());
+    ws.on("error", (e) => { console.error(`[stt] socket error: ${(e as Error).message}`); this.emit("closed"); });
+    ws.on("close", () => this.emit("closed"));
     ws.on("unexpected-response", (_req, res) => {
       let body = "";
       res.on("data", (c: Buffer) => (body += c.toString()));
-      res.on("end", () => { console.error(`[stt] HTTP ${res.statusCode}: ${body}`); this.h.onClose(); });
-      res.on("error", () => this.h.onClose());
+      res.on("end", () => { console.error(`[stt] HTTP ${res.statusCode}: ${body}`); this.emit("closed"); });
+      res.on("error", () => this.emit("closed"));
     });
   }
 
@@ -64,7 +73,7 @@ export class InworldSTT {
     try { m = JSON.parse(data.toString()); } catch { return; }
     if (m.error) { console.error(`[stt] error frame: ${JSON.stringify(m.error)}`); return; }
     const t = m?.result?.transcription;
-    if (t?.transcript) this.h.onTranscript(t.transcript, !!t.isFinal);
+    if (t?.transcript) this.emit("transcript", t.transcript, !!t.isFinal);
   }
 
   private send(msg: object): void { if (this.ws?.readyState === WebSocket.OPEN) this.ws.send(JSON.stringify(msg)); }

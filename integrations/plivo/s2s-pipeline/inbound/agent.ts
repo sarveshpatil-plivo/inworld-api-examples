@@ -1,14 +1,14 @@
 /**
  * Inbound voice agent — Inworld Realtime (speech-to-speech).
  *
- * Orchestrates one call: bridges caller audio (Plivo) to the Inworld Realtime
- * client and paces the agent's audio back. Audio is G.711 μ-law @ 8 kHz on both
- * legs, so it passes through untouched. Telephony lives in server.ts; the Inworld
- * protocol lives in inworld.ts; this file is the call state machine.
+ * Bridges caller audio (Plivo) to the Inworld Realtime client and paces the
+ * agent's audio back. Audio is G.711 μ-law @ 8 kHz on both legs, so it passes
+ * through untouched. Telephony lives in server.ts; the Inworld protocol in
+ * inworld.ts; this is the call state machine (barge-in + end_call).
  */
 import WebSocket from "ws";
 import { config } from "./config.js";
-import { InworldRealtime, type RealtimeHandlers } from "./inworld.js";
+import { InworldRealtime } from "./inworld.js";
 
 const PLIVO_CHUNK_SIZE = 160; // 20 ms of μ-law @ 8 kHz
 
@@ -24,7 +24,7 @@ const END_CALL_TOOL = {
   },
 };
 
-interface AgentOptions {
+export interface AgentOptions {
   plivoWs: WebSocket;
   callId: string;
   streamId: string;
@@ -34,149 +34,124 @@ interface AgentOptions {
   hangup?: () => Promise<void> | void;
 }
 
-class InworldS2SAgent implements RealtimeHandlers {
-  private readonly inworld: InworldRealtime;
-  private running = false;
-  private responseGenerating = false;
-  private outBuffer = Buffer.alloc(0);
-  private txTimer: ReturnType<typeof setInterval> | null = null;
-  private resolveRun: (() => void) | null = null;
+/** Run one call; resolves when it ends (either socket closes or the agent hangs up). */
+export function runAgent(opts: AgentOptions): Promise<void> {
+  const { plivoWs, callId, streamId, hangup } = opts;
+  const log = (stage: string, msg: string) => console.log(`[${callId}] [${stage}] ${msg}`);
+
+  let outBuffer = Buffer.alloc(0);
+  let responseGenerating = false;
+  let running = true;
+  let txTimer: ReturnType<typeof setInterval> | null = null;
 
   // end_call: hang up once the farewell has actually played
-  private pendingHangup = false;
-  private farewellStarted = false;
-  private hangupSilenceTicks = 0;
-  private hangupArmedAt = 0;
-  private hungUp = false;
+  let pendingHangup = false;
+  let farewellStarted = false;
+  let hangupSilenceTicks = 0;
+  let hangupArmedAt = 0;
+  let hungUp = false;
 
-  constructor(private readonly opts: AgentOptions) {
-    let instructions = opts.systemPrompt || config.systemPrompt;
-    if (opts.fromNumber) instructions += `\n\n## Call Context\n- Caller: ${opts.fromNumber}\n- Call ID: ${opts.callId}`;
-    this.inworld = new InworldRealtime(
-      { apiKey: config.inworldApiKey, sessionId: `voice-${opts.callId}`, instructions,
-        llmModel: config.llmModel, sttModel: config.sttModel, ttsModel: config.ttsModel,
-        voice: config.voice, vadEagerness: config.vadEagerness, tools: [END_CALL_TOOL] },
-      this,
-    );
-  }
+  let instructions = opts.systemPrompt || config.systemPrompt;
+  if (opts.fromNumber) instructions += `\n\n## Call Context\n- Caller: ${opts.fromNumber}\n- Call ID: ${callId}`;
+  const inworld = new InworldRealtime(`voice-${callId}`, instructions, [END_CALL_TOOL]);
 
-  private log(stage: string, msg: string): void { console.log(`[${this.opts.callId}] [${stage}] ${msg}`); }
+  const isSpeaking = () => responseGenerating || outBuffer.length > 0;
 
-  run(): Promise<void> {
-    this.running = true;
-    return new Promise((resolve) => {
-      this.resolveRun = resolve;
-      this.startTxPump();
-      this.inworld.connect();
-      this.opts.plivoWs.on("message", (d: Buffer) => this.onPlivoMessage(d));
-      this.opts.plivoWs.on("close", () => this.finish());
-      this.opts.plivoWs.on("error", () => this.finish());
-    });
-  }
-
-  // ── Inworld events (RealtimeHandlers) ─────────────────────────────────────
-  onReady(): void { this.inworld.greet(); }
-  onAudioDelta(audioB64: string): void {
-    this.responseGenerating = true;
-    if (this.pendingHangup) this.farewellStarted = true; // the goodbye is now playing
-    if (audioB64) this.outBuffer = Buffer.concat([this.outBuffer, Buffer.from(audioB64, "base64")]);
-  }
-  onResponseDone(): void { this.responseGenerating = false; }
-  onUserTranscript(text: string): void { this.log("user", text); }
-  onSpeechStarted(): void { if (this.isSpeaking()) this.bargeIn(); }
-  onToolCall(callId: string, name: string, argsJson: string): void {
-    if (name !== "end_call") return;
-    let reason = "";
-    try { reason = String(JSON.parse(argsJson || "{}").reason || ""); } catch { /* keep "" */ }
-    this.inworld.sendToolResult(callId, { ok: true }); // let the model voice a closing line
-    this.pendingHangup = true;
-    this.hangupArmedAt = Date.now();
-    if (this.isSpeaking()) this.farewellStarted = true; // goodbye said in the same turn as the tool call
-    this.log("end_call", reason || "requested");
-  }
-  onClose(): void { this.finish(); }
-
-  // ── Plivo caller audio → Inworld ──────────────────────────────────────────
-  private onPlivoMessage(data: Buffer): void {
-    let msg: { event?: string; media?: { payload?: string } };
-    try { msg = JSON.parse(data.toString()); } catch { return; }
-    if (msg.event === "media" && msg.media?.payload) this.inworld.appendAudio(msg.media.payload); // μ-law passthrough
-    else if (msg.event === "stop") this.finish();
-  }
-
-  /** True while the agent is generating audio or still has audio queued to play. */
-  private isSpeaking(): boolean { return this.responseGenerating || this.outBuffer.length > 0; }
-
-  /**
-   * Paced sender — one 20 ms frame per tick. Inworld emits faster than real time;
-   * pacing keeps un-played audio here in outBuffer, where a barge-in can drop it.
-   * Also drives the end_call hangup once the farewell has played.
-   */
-  private startTxPump(): void {
-    this.txTimer = setInterval(() => {
-      if (this.outBuffer.length >= PLIVO_CHUNK_SIZE) {
-        this.sendChunkToPlivo(this.outBuffer.subarray(0, PLIVO_CHUNK_SIZE));
-        this.outBuffer = this.outBuffer.subarray(PLIVO_CHUNK_SIZE);
-      } else if (this.outBuffer.length > 0 && !this.responseGenerating) {
-        this.sendChunkToPlivo(this.outBuffer);
-        this.outBuffer = Buffer.alloc(0);
-      }
-
-      if (this.pendingHangup && !this.hungUp) {
-        if (Date.now() - this.hangupArmedAt > 12000) this.doHangup();                 // stall backstop
-        else if (this.farewellStarted && !this.isSpeaking()) { if (++this.hangupSilenceTicks >= 30) this.doHangup(); }
-        else this.hangupSilenceTicks = 0;
-      }
-    }, 20);
-  }
-
-  private sendChunkToPlivo(chunk: Buffer): void {
-    if (this.opts.plivoWs.readyState !== WebSocket.OPEN || !this.opts.streamId) return;
-    this.opts.plivoWs.send(JSON.stringify({
+  function sendChunk(chunk: Buffer): void {
+    if (plivoWs.readyState !== WebSocket.OPEN || !streamId) return;
+    plivoWs.send(JSON.stringify({
       event: "playAudio",
       media: { contentType: "audio/x-mulaw", sampleRate: 8000, payload: chunk.toString("base64") },
     }));
   }
 
-  private bargeIn(): void {
-    this.log("barge-in", "user interrupted");
-    this.responseGenerating = false;
+  function bargeIn(): void {
+    log("barge-in", "user interrupted");
+    responseGenerating = false;
     // Caller re-engaged — cancel any armed end_call hangup so we don't drop them.
-    if (this.pendingHangup && !this.hungUp) {
-      this.pendingHangup = false; this.farewellStarted = false; this.hangupSilenceTicks = 0; this.hangupArmedAt = 0;
-    }
-    this.outBuffer = Buffer.alloc(0);
-    if (this.opts.plivoWs.readyState === WebSocket.OPEN) {
-      this.opts.plivoWs.send(JSON.stringify({ event: "clearAudio", stream_id: this.opts.streamId }));
-    }
-    this.inworld.cancelResponse();
+    if (pendingHangup && !hungUp) { pendingHangup = false; farewellStarted = false; hangupSilenceTicks = 0; hangupArmedAt = 0; }
+    outBuffer = Buffer.alloc(0);
+    if (plivoWs.readyState === WebSocket.OPEN) plivoWs.send(JSON.stringify({ event: "clearAudio", stream_id: streamId }));
+    inworld.cancelResponse();
   }
 
   /** Hang up once. Falls back to closing the media stream if hangup is missing/fails. */
-  private doHangup(): void {
-    if (this.hungUp) return;
-    this.hungUp = true;
-    if (!this.opts.hangup) { try { this.opts.plivoWs.close(); } catch { /* noop */ } return; }
-    Promise.resolve(this.opts.hangup()).catch((err) => {
-      console.error(`[${this.opts.callId}] [end_call] hangup failed: ${(err as Error).message}`);
-      try { this.opts.plivoWs.close(); } catch { /* noop */ }
+  function doHangup(): void {
+    if (hungUp) return;
+    hungUp = true;
+    if (!hangup) { try { plivoWs.close(); } catch { /* noop */ } return; }
+    Promise.resolve(hangup()).catch((err) => {
+      console.error(`[${callId}] [end_call] hangup failed: ${(err as Error).message}`);
+      try { plivoWs.close(); } catch { /* noop */ }
     });
   }
 
-  /** Single teardown path: clears the pump, closes both sockets, resolves run(). */
-  private finish(): void {
-    if (!this.running) return;
-    this.running = false;
-    if (this.txTimer) { clearInterval(this.txTimer); this.txTimer = null; }
-    this.log("session", "ended");
-    this.inworld.close();
-    try { if (this.opts.plivoWs.readyState === WebSocket.OPEN) this.opts.plivoWs.close(); } catch { /* noop */ }
-    this.resolveRun?.();
-    this.resolveRun = null;
+  /** Single teardown path: stops the pump, closes both sockets, resolves run(). */
+  let resolveRun: (() => void) | null = null;
+  function finish(): void {
+    if (!running) return;
+    running = false;
+    if (txTimer) { clearInterval(txTimer); txTimer = null; }
+    log("session", "ended");
+    inworld.close();
+    try { if (plivoWs.readyState === WebSocket.OPEN) plivoWs.close(); } catch { /* noop */ }
+    resolveRun?.();
+    resolveRun = null;
   }
-}
 
-/** Public entry point — the server calls this once a Plivo stream has started. */
-export async function runAgent(opts: AgentOptions): Promise<void> {
-  await new InworldS2SAgent(opts).run();
+  function onPlivoMessage(data: Buffer): void {
+    let msg: { event?: string; media?: { payload?: string } };
+    try { msg = JSON.parse(data.toString()); } catch { return; }
+    if (msg.event === "media" && msg.media?.payload) inworld.appendAudio(msg.media.payload); // μ-law passthrough
+    else if (msg.event === "stop") finish();
+  }
+
+  // Inworld events
+  inworld.on("ready", () => inworld.greet());
+  inworld.on("audio", (audioB64) => {
+    responseGenerating = true;
+    if (pendingHangup) farewellStarted = true; // the goodbye is now playing
+    if (audioB64) outBuffer = Buffer.concat([outBuffer, Buffer.from(audioB64, "base64")]);
+  });
+  inworld.on("responseDone", () => { responseGenerating = false; });
+  inworld.on("userTranscript", (text) => log("user", text));
+  inworld.on("speechStarted", () => { if (isSpeaking()) bargeIn(); });
+  inworld.on("toolCall", (toolCallId, name, argsJson) => {
+    if (name !== "end_call") return;
+    let reason = "";
+    try { reason = String(JSON.parse(argsJson || "{}").reason || ""); } catch { /* keep "" */ }
+    inworld.sendToolResult(toolCallId, { ok: true });        // let the model voice a closing line
+    pendingHangup = true;
+    hangupArmedAt = Date.now();
+    if (isSpeaking()) farewellStarted = true;                // goodbye said in the same turn as the tool call
+    log("end_call", reason || "requested");
+  });
+  inworld.on("closed", () => finish());
+
+  return new Promise<void>((resolve) => {
+    resolveRun = resolve;
+    plivoWs.on("message", onPlivoMessage);
+    plivoWs.on("close", finish);
+    plivoWs.on("error", finish);
+
+    // Paced sender — one 20 ms frame/tick — so a barge-in can drop un-played
+    // audio; also drives the end_call hangup once the farewell has played.
+    txTimer = setInterval(() => {
+      if (outBuffer.length >= PLIVO_CHUNK_SIZE) {
+        sendChunk(outBuffer.subarray(0, PLIVO_CHUNK_SIZE));
+        outBuffer = outBuffer.subarray(PLIVO_CHUNK_SIZE);
+      } else if (outBuffer.length > 0 && !responseGenerating) {
+        sendChunk(outBuffer);
+        outBuffer = Buffer.alloc(0);
+      }
+
+      if (pendingHangup && !hungUp) {
+        if (Date.now() - hangupArmedAt > 12000) doHangup();                  // stall backstop
+        else if (farewellStarted && !isSpeaking()) { if (++hangupSilenceTicks >= 30) doHangup(); }
+        else hangupSilenceTicks = 0;
+      }
+    }, 20);
+
+    inworld.connect();
+  });
 }
