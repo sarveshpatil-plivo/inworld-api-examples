@@ -31,4 +31,4 @@ pipeline flow, API contracts, and file map.
 - `[stt] Inworld HTTP <status>` / `error frame` → scope or config mismatch (8k vs 16k, encoding).
 - `[tts] speaking: …` then a thrown `Inworld TTS <status>` (logged as `[turn] pipeline error` or `[tts] skipped`) → scope or unsupported `audio_encoding`/`sample_rate_hertz`.
 - No reply after transcript → Router scope/model, or the 800ms silence timer never fired (no `isFinal`).
-- Audio garbled → sample-rate mismatch; confirm `TTS_SAMPLE_RATE` matches what TTS actually returns.
+- Audio garbled → sample-rate mismatch; confirm `ttsSampleRate` in `config.ts` matches what TTS actually returns.

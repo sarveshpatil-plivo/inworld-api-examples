@@ -59,7 +59,7 @@ Local testing needs a public tunnel: `ngrok http 3000` → put the HTTPS URL in 
 ## Env vars
 
 Required: `INWORLD_API_KEY` (STT+Router+TTS), `PUBLIC_URL`, `PLIVO_AUTH_ID`, `PLIVO_AUTH_TOKEN`, `PLIVO_PHONE_NUMBER`.
-Optional (override pipeline defaults): `SERVER_PORT`, `SYSTEM_PROMPT`, `LLM_MODEL`, `STT_MODEL`, `TTS_MODEL`, `VOICE`, `TTS_SAMPLE_RATE`.
+Optional (override pipeline defaults): `SERVER_PORT`, `VOICE`, `SYSTEM_PROMPT`.
 
 ## Verifying a change (needs STT+Router+TTS-scoped key)
 

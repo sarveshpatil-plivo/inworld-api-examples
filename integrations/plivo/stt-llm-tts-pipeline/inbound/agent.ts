@@ -169,6 +169,7 @@ export function runAgent(opts: AgentOptions): Promise<void> {
     log("barge-in", "user interrupted");
     if (silenceTimer) { clearTimeout(silenceTimer); silenceTimer = null; }
     pendingTranscript = "";
+    pendingTurn = null; // drop a turn queued mid-processing — the caller has taken the floor
     // Caller re-engaged — cancel any armed end_call hangup so we don't drop them.
     if (pendingHangup && !hungUp) { pendingHangup = false; hangupSilenceTicks = 0; hangupArmedAt = 0; }
     outBuffer = Buffer.alloc(0);
